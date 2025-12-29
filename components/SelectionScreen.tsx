@@ -12,7 +12,9 @@ import {
   Search,
   Settings2,
   AlertCircle,
-  Hash
+  Hash,
+  Info,
+  Check
 } from 'lucide-react';
 
 interface Props {
@@ -26,32 +28,36 @@ interface Props {
 const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelectionChange, onGenerate }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
-  // All F1 and F2 parts are visible for manual or system selection
+  // Logic: Exclude F0 (defaults) from the selection UI as they are automatically in the BOM
   const configParts = useMemo(() => {
     return parts.filter(p => (p.F_Code === 1 || p.F_Code === 2));
   }, [parts]);
 
-  // Logic Evaluation for System Selection
-  // Rule Logic: Selection logic runs across DIFFERENT Ref_des. 
-  // We collect metadata from ALL currently selected parts (including F_Code 0 defaults)
+  // Logic: Cross-Ref_des Selection Logic Engine
+  // Aggregates metadata from all current selections to trigger dependencies globally
   const systemRecommendedIds = useMemo(() => {
     const recommended = new Set<string>();
     
-    // Include F_Code 0 parts in the trigger context as they are "default added"
-    const defaultParts = parts.filter(p => p.F_Code === 0);
-    const contextParts = [...defaultParts, ...parts.filter(p => selectedIds.has(p.id))];
+    // Include F_Code 0 (Defaults) in the trigger context as they are always 'active'
+    const activeContextParts = [
+      ...parts.filter(p => p.F_Code === 0),
+      ...parts.filter(p => selectedIds.has(p.id))
+    ];
     
-    const combinedMetadata = contextParts.map(p => {
-      return (p?.Remarks + ' ' + p?.Std_Remarks).toUpperCase();
-    }).join(' ');
+    // Combine remarks and std_remarks from all active parts into one searchable string
+    const globalMetadata = activeContextParts.map(p => 
+      `${p.Remarks} ${p.Std_Remarks}`.toUpperCase()
+    ).join(' ');
 
     rules.forEach(rule => {
-      // AND Logic: All keywords in rule must exist in combined metadata of all active selections
-      const allKeywordsMet = rule.keywords.length > 0 && rule.keywords.every(kw => 
-        combinedMetadata.includes(kw.toUpperCase())
+      // AND Logic: Every keyword in the rule must be found in the global metadata
+      if (rule.keywords.length === 0) return;
+      
+      const isMet = rule.keywords.every(kw => 
+        globalMetadata.includes(kw.toUpperCase())
       );
       
-      if (allKeywordsMet) {
+      if (isMet) {
         recommended.add(rule.targetPartId);
       }
     });
@@ -59,158 +65,170 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     return recommended;
   }, [selectedIds, parts, rules]);
 
-  // Sync system recommendations into selection state
+  // Proactive Sync: Automatically select parts triggered by logic
   useEffect(() => {
-    let changed = false;
-    const newSelected = new Set(selectedIds);
+    let hasChanges = false;
+    const nextSelected = new Set(selectedIds);
     
     systemRecommendedIds.forEach(id => {
-      if (!newSelected.has(id)) {
-        newSelected.add(id);
-        changed = true;
+      if (!nextSelected.has(id)) {
+        // Find the part to check its Ref_des grouping for F2 enforcement
+        const part = parts.find(p => p.id === id);
+        if (part && part.F_Code === 2) {
+          // If system recommends an F2 part, clear other F2s in that group first
+          parts.filter(p => p.Ref_des === part.Ref_des && p.F_Code === 2).forEach(p => {
+            nextSelected.delete(p.id);
+          });
+        }
+        nextSelected.add(id);
+        hasChanges = true;
       }
     });
 
-    if (changed) {
-      onSelectionChange(newSelected);
+    if (hasChanges) {
+      onSelectionChange(nextSelected);
     }
-  }, [systemRecommendedIds]);
+  }, [systemRecommendedIds, parts, onSelectionChange, selectedIds]);
 
   // Grouping by Reference Designator
   const groupedParts = useMemo(() => {
     const groups: Record<string, BOMPart[]> = {};
-    configParts.filter(p => 
-      p.Part_Number.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      p.Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.Remarks.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.Std_Remarks.toLowerCase().includes(searchTerm.toLowerCase())
-    ).forEach(p => {
-      const key = p.Ref_des || 'Unassigned Components';
+    configParts.filter(p => {
+      const q = searchTerm.toLowerCase();
+      return p.Part_Number.toLowerCase().includes(q) || 
+             p.Name.toLowerCase().includes(q) ||
+             p.Remarks.toLowerCase().includes(q) ||
+             p.Std_Remarks.toLowerCase().includes(q);
+    }).forEach(p => {
+      const key = p.Ref_des || 'Standard Components';
       if (!groups[key]) groups[key] = [];
       groups[key].push(p);
     });
     return Object.entries(groups).sort((a,b) => a[0].localeCompare(b[0]));
   }, [configParts, searchTerm]);
 
-  // Validation: Mandatory (F2) check
+  // Validation: Ensure mandatory F2 groups have exactly one selection
   const validation = useMemo(() => {
     const missing: string[] = [];
     groupedParts.forEach(([group, items]) => {
-      const hasMandatoryParts = items.some(p => p.F_Code === 2);
-      if (hasMandatoryParts) {
-        const isSelectedInGroup = items.some(p => selectedIds.has(p.id) && p.F_Code === 2);
-        if (!isSelectedInGroup) missing.push(group);
+      const hasF2 = items.some(p => p.F_Code === 2);
+      if (hasF2) {
+        const isSelected = items.some(p => selectedIds.has(p.id) && p.F_Code === 2);
+        if (!isSelected) missing.push(group);
       }
     });
-    const totalMandatoryGroups = groupedParts.filter(([_, items]) => items.some(p => p.F_Code === 2)).length;
-    const metCount = totalMandatoryGroups - missing.length;
-    const progress = totalMandatoryGroups > 0 ? Math.round((metCount / totalMandatoryGroups) * 100) : 100;
+    const totalMandatory = groupedParts.filter(([_, items]) => items.some(p => p.F_Code === 2)).length;
+    const progress = totalMandatory > 0 ? Math.round(((totalMandatory - missing.length) / totalMandatory) * 100) : 100;
     return { isValid: missing.length === 0, missing, progress };
   }, [groupedParts, selectedIds]);
 
   const toggleSelection = useCallback((part: BOMPart) => {
-    const newSelected = new Set(selectedIds);
+    const nextSelected = new Set(selectedIds);
     
     if (part.F_Code === 2) {
-      // Requirement: Only one selection allowed for F_Code 2 within same Ref_des group
+      // Logic: Only one selection allowed for F_Code 2 within same Ref_des (Radio Button logic)
       const groupItems = groupedParts.find(([k]) => k === part.Ref_des)?.[1] || [];
       groupItems.forEach(p => {
-        if (p.F_Code === 2) newSelected.delete(p.id);
+        if (p.F_Code === 2) nextSelected.delete(p.id);
       });
-      newSelected.add(part.id);
+      nextSelected.add(part.id);
     } else {
-      // F_Code 1: Optional multiple selection toggle
-      if (newSelected.has(part.id)) {
-        newSelected.delete(part.id);
+      // Logic: Multiple selections allowed for F_Code 1 (Checkbox logic)
+      if (nextSelected.has(part.id)) {
+        nextSelected.delete(part.id);
       } else {
-        newSelected.add(part.id);
+        nextSelected.add(part.id);
       }
     }
-    onSelectionChange(newSelected);
+    onSelectionChange(nextSelected);
   }, [selectedIds, groupedParts, onSelectionChange]);
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      <div className="p-6 border-b border-slate-200 bg-white shadow-sm sticky top-0 z-30">
-        <div className="flex flex-wrap justify-between items-center gap-6">
+      {/* Dynamic Header */}
+      <div className="p-8 border-b border-slate-200 bg-white sticky top-0 z-30 shadow-sm">
+        <div className="flex flex-wrap justify-between items-center gap-8 max-w-[1600px] mx-auto w-full">
           <div className="flex-1 min-w-[300px]">
-            <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800">
-              <CheckSquare className="text-indigo-600" />
-              Engineering Selector
+            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3 tracking-tight">
+              <div className="p-2.5 bg-indigo-600 text-white rounded-2xl shadow-indigo-100 shadow-lg">
+                <CheckSquare size={24} />
+              </div>
+              Engineering Configuration Selector
             </h2>
-            <div className="mt-4 flex items-center gap-4">
-              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+            <div className="mt-6 flex items-center gap-6">
+              <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200 shadow-inner">
                 <div 
-                  className={`h-full transition-all duration-700 ${validation.isValid ? 'bg-emerald-500' : 'bg-indigo-500'}`} 
+                  className={`h-full transition-all duration-1000 ease-out ${validation.isValid ? 'bg-emerald-500' : 'bg-indigo-600'}`} 
                   style={{ width: `${validation.progress}%` }}
                 ></div>
               </div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{validation.progress}% Mandatory Groups Fulfilled</span>
+              <span className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em]">{validation.progress}% Groups Valid</span>
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          <div className="flex items-center gap-4">
+            <div className="relative group">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-600 transition-colors" size={20} />
               <input 
                 type="text" 
-                placeholder="Search catalog..." 
+                placeholder="Filter by SKU, Name or Remark..." 
                 value={searchTerm} 
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/10 outline-none w-64"
+                className="pl-12 pr-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-[2rem] text-sm font-bold focus:border-indigo-500 focus:bg-white focus:ring-8 focus:ring-indigo-500/5 transition-all outline-none w-96 shadow-sm"
               />
             </div>
             <button 
               onClick={onGenerate} 
               disabled={!validation.isValid} 
-              className={`px-8 py-3 rounded-xl flex items-center gap-2 font-black transition-all shadow-lg text-xs uppercase tracking-widest ${
+              className={`px-10 py-4 rounded-[2rem] flex items-center gap-3 font-black transition-all shadow-xl text-xs uppercase tracking-[0.2em] border-b-4 active:border-b-0 active:translate-y-1 ${
                 validation.isValid 
-                ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200' 
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                ? 'bg-indigo-600 border-indigo-800 hover:bg-indigo-700 text-white shadow-indigo-200' 
+                : 'bg-slate-200 border-slate-300 text-slate-400 cursor-not-allowed shadow-none'
               }`}
             >
-              <ShieldCheck size={18} /> Finalize Configuration
+              <ShieldCheck size={20} /> Build Configured BOM
             </button>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-6 md:p-10 space-y-12 max-w-7xl mx-auto w-full">
+      {/* Main Selection Surface */}
+      <div className="flex-1 overflow-auto p-8 md:p-12 space-y-16 max-w-[1600px] mx-auto w-full">
         {!validation.isValid && (
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4">
-            <AlertCircle className="text-amber-500" size={20} />
-            <div className="text-xs">
-              <span className="font-black text-amber-800 uppercase tracking-widest">Pending Selection:</span>
-              <span className="ml-2 text-amber-700 font-medium">Please select mandatory components for: <span className="font-bold">{validation.missing.join(', ')}</span></span>
+          <div className="bg-amber-50 border-2 border-amber-200 p-6 rounded-[2.5rem] flex items-center gap-5 shadow-sm animate-in fade-in slide-in-from-top-4">
+            <div className="p-3.5 bg-white rounded-full text-amber-500 shadow-md ring-8 ring-amber-100/50"><AlertCircle size={28} /></div>
+            <div>
+              <p className="font-black text-amber-900 uppercase tracking-[0.2em] text-xs mb-1">Configuration Required</p>
+              <p className="text-amber-800 font-bold text-sm tracking-tight">Mandatory items missing for: <span className="bg-amber-200/40 px-3 py-1 rounded-xl border border-amber-300/50 ml-1">{validation.missing.join(', ')}</span></p>
             </div>
           </div>
         )}
 
         {groupedParts.map(([group, items]) => {
-          // Requirement: Each Ref_des group header should show the Name of selected item
-          const selectedInGroup = items.find(p => selectedIds.has(p.id) && p.F_Code === 2);
+          // Logic: Display the name of the currently selected part in the group header
+          const selectedInGroup = items.find(p => selectedIds.has(p.id));
           
           return (
-            <div key={group} className="space-y-6">
-              <div className="flex items-center gap-4 bg-white/50 p-2 rounded-xl border border-slate-100 backdrop-blur-sm">
-                <div className="p-2 bg-indigo-600 text-white rounded-lg shadow-sm">
-                  <Hash size={16} />
+            <div key={group} className="space-y-10">
+              <div className="flex items-center gap-6 sticky top-0 z-20 bg-slate-50/90 backdrop-blur-md py-4">
+                <div className="p-3.5 bg-slate-900 text-white rounded-2xl shadow-xl transform rotate-3">
+                  <Hash size={24} />
                 </div>
-                <div className="flex-1">
-                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-[0.2em]">
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-black text-slate-900 uppercase tracking-[0.3em] truncate">
                     {group}
                   </h3>
                   {selectedInGroup && (
-                    <div className="text-[10px] text-indigo-600 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-0.5 animate-in fade-in slide-in-from-left-2">
-                      <div className="w-1 h-1 bg-indigo-600 rounded-full"></div>
-                      Current Selection: {selectedInGroup.Name}
+                    <div className="text-[11px] text-indigo-600 font-black uppercase tracking-[0.2em] flex items-center gap-2 mt-1.5 animate-in fade-in slide-in-from-left-4">
+                      <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-ping"></div>
+                      Selected: <span className="text-slate-700 bg-white px-3 py-0.5 rounded-full border border-slate-200 shadow-sm ml-1">{selectedInGroup.Name}</span>
                     </div>
                   )}
                 </div>
-                <div className="h-px bg-slate-200 flex-[0.5]"></div>
+                <div className="h-px bg-slate-200 flex-[0.6]"></div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
                 {items.map(part => {
                   const isSelected = selectedIds.has(part.id);
                   const isSystemSelected = systemRecommendedIds.has(part.id);
@@ -220,83 +238,85 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                     <button
                       key={part.id}
                       onClick={() => toggleSelection(part)}
-                      className={`group relative flex flex-col text-left p-6 rounded-[2rem] border-2 transition-all duration-300 transform active:scale-[0.98] ${
+                      className={`group relative flex flex-col text-left p-8 rounded-[3rem] border-2 transition-all duration-500 transform active:scale-95 ${
                         isSelected 
                           ? isF2 
-                            ? 'border-indigo-600 bg-white shadow-2xl ring-8 ring-indigo-50/50' 
-                            : 'border-emerald-600 bg-white shadow-2xl ring-8 ring-emerald-50/50'
-                          : 'border-white bg-white shadow-sm hover:border-slate-200 hover:shadow-xl'
-                      } ${isSystemSelected && isSelected ? 'bg-indigo-50/30' : ''}`}
+                            ? 'border-indigo-600 bg-white shadow-2xl ring-[14px] ring-indigo-50/60 scale-[1.02] z-10' 
+                            : 'border-emerald-600 bg-white shadow-2xl ring-[14px] ring-emerald-50/60 scale-[1.02] z-10'
+                          : 'border-white bg-white shadow-md hover:border-slate-200 hover:shadow-2xl hover:translate-y-[-6px]'
+                      } ${isSystemSelected && isSelected ? 'bg-indigo-50/20' : ''}`}
                     >
-                      {/* System Recommendation Highlight */}
+                      {/* Logic Identity Tag */}
                       {isSystemSelected && (
-                        <div className="absolute -top-3 left-6 px-3 py-1 bg-indigo-600 text-white text-[9px] font-black uppercase tracking-widest rounded-full shadow-lg flex items-center gap-1.5 z-10 border border-white/20">
-                          <Sparkles size={10} className="animate-pulse" /> Recommended
+                        <div className="absolute -top-4 left-10 px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-full shadow-xl flex items-center gap-2 z-20 border-2 border-white animate-in zoom-in">
+                          <Sparkles size={12} className="animate-pulse" /> Verified Logic
                         </div>
                       )}
 
-                      {/* Type Label */}
-                      <div className="absolute top-6 right-6">
-                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${
+                      {/* Type Badge */}
+                      <div className="absolute top-8 right-8">
+                        <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border shadow-sm flex items-center gap-1.5 ${
                           isF2 ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
                         }`}>
-                          {isF2 ? 'Radio' : 'Checkbox'}
+                          <Info size={12} />
+                          {isF2 ? 'F2: Mandatory' : 'F1: Optional'}
                         </span>
                       </div>
 
-                      {/* Requirement: Show Part_Number, Name, Std_Remarks, Remarks */}
-                      <div className="flex justify-between items-start mb-4">
+                      <div className="flex justify-between items-start mb-6">
                         <div className="flex flex-col">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 font-mono">
+                          {/* Metadata: Part Number */}
+                          <span className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 font-mono">
                             {part.Part_Number}
                           </span>
-                          <div className={`h-1.5 w-12 rounded-full transition-all duration-500 ${isSelected ? (isF2 ? 'bg-indigo-600 w-16' : 'bg-emerald-600 w-16') : 'bg-slate-100'}`}></div>
+                          <div className={`h-2 w-16 rounded-full transition-all duration-700 shadow-sm ${isSelected ? (isF2 ? 'bg-indigo-600 w-28' : 'bg-emerald-600 w-28') : 'bg-slate-100'}`}></div>
                         </div>
                         
-                        {/* Status Icon */}
-                        <div className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all duration-500 ${
+                        {/* Selector UI Icon (Radio vs Checkbox style) */}
+                        <div className={`w-11 h-11 rounded-full border-2 flex items-center justify-center transition-all duration-500 ${
                           isSelected 
-                            ? isF2 ? 'bg-indigo-600 border-indigo-600 shadow-lg shadow-indigo-100' : 'bg-emerald-600 border-emerald-600 shadow-lg shadow-emerald-100'
-                            : 'border-slate-100 group-hover:border-slate-300'
+                            ? isF2 ? 'bg-indigo-600 border-indigo-600 shadow-lg shadow-indigo-200' : 'bg-emerald-600 border-emerald-600 shadow-lg shadow-emerald-200'
+                            : 'border-slate-100 group-hover:border-slate-300 group-hover:bg-slate-50'
                         }`}>
                           {isSelected ? (
-                            isF2 ? <div className="w-3 h-3 rounded-full bg-white scale-110 transition-transform"></div> : <FileCheck size={18} className="text-white" />
+                            isF2 ? <div className="w-4 h-4 rounded-full bg-white shadow-sm"></div> : <Check size={22} className="text-white stroke-[3px]" />
                           ) : (
-                            isF2 ? <Circle size={14} className="text-slate-200" /> : <Square size={14} className="text-slate-200" />
+                            isF2 ? <Circle size={18} className="text-slate-100" /> : <Square size={18} className="text-slate-100" />
                           )}
                         </div>
                       </div>
 
-                      <p className={`text-base font-black leading-tight mb-4 min-h-[2.5rem] line-clamp-2 transition-colors ${isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
+                      {/* Metadata: Name */}
+                      <p className={`text-xl font-black leading-tight mb-8 min-h-[3rem] line-clamp-2 transition-colors ${isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
                         {part.Name}
                       </p>
                       
-                      <div className="mt-auto space-y-4">
-                        {/* Remarks Section */}
-                        <div className="space-y-1">
-                          <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest block">Assembly Specs</span>
-                          <p className={`text-[11px] font-medium italic leading-relaxed line-clamp-2 ${isSelected ? 'text-slate-600' : 'text-slate-400'}`}>
-                            {part.Remarks || 'Standard engineering unit.'}
+                      <div className="mt-auto space-y-6">
+                        {/* Metadata: Technical Remarks */}
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest block">Technical Specs</span>
+                          <p className={`text-[13px] font-bold italic leading-relaxed line-clamp-2 ${isSelected ? 'text-slate-600' : 'text-slate-400'}`}>
+                            {part.Remarks || 'Standard engineering part.'}
                           </p>
                         </div>
 
-                        {/* Standard Remarks Label */}
+                        {/* Metadata: Std Remarks Label */}
                         {part.Std_Remarks && (
-                          <div className={`flex items-center gap-2 text-[9px] px-3 py-1.5 rounded-xl font-black border w-fit transition-all ${
+                          <div className={`flex items-center gap-2.5 text-[10px] px-4 py-2.5 rounded-[1.25rem] font-black border-2 w-fit transition-all shadow-sm ${
                             isSelected 
                               ? isF2 ? 'text-indigo-700 bg-indigo-50 border-indigo-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200'
-                              : 'text-slate-500 bg-slate-50 border-slate-100 group-hover:bg-slate-100'
+                              : 'text-slate-500 bg-slate-50 border-slate-100 group-hover:bg-slate-100 group-hover:border-slate-200'
                           }`}>
-                            <Zap size={10} className={isSelected ? 'fill-current' : ''} />
+                            <Zap size={14} className={isSelected ? 'fill-current' : 'text-slate-300'} />
                             {part.Std_Remarks.toUpperCase()}
                           </div>
                         )}
 
-                        {/* System Highlight Visual */}
+                        {/* Recommendation Feedback */}
                         {isSystemSelected && isSelected && (
-                          <div className="pt-3 border-t border-slate-100 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1">
-                            <Settings2 size={12} className="text-indigo-600" />
-                            <span className="text-[9px] font-black text-indigo-700 uppercase tracking-tighter">Logic-Driven Selection</span>
+                          <div className="pt-5 border-t border-slate-100 flex items-center gap-2 animate-in slide-in-from-bottom-2 fade-in">
+                            <Settings2 size={16} className="text-indigo-600" />
+                            <span className="text-[11px] font-black text-indigo-700 uppercase tracking-tight">Active via System Logic</span>
                           </div>
                         )}
                       </div>
@@ -309,22 +329,24 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
         })}
       </div>
 
-      <div className="p-6 bg-white border-t border-slate-200 flex flex-wrap justify-between items-center gap-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-        <div className="flex gap-8">
-          <span className="flex items-center gap-3">
-            <div className="w-3.5 h-3.5 border-2 border-indigo-600 rounded-full flex items-center justify-center"><div className="w-1.5 h-1.5 bg-indigo-600 rounded-full"></div></div> 
-            F2 Mandatory (Single)
+      {/* Persistence / Summary Footer */}
+      <div className="p-10 bg-white border-t border-slate-200 flex flex-wrap justify-between items-center gap-8 text-[11px] font-black uppercase tracking-[0.3em] text-slate-400">
+        <div className="flex gap-12">
+          <span className="flex items-center gap-4">
+            <div className="w-5 h-5 border-2 border-indigo-600 rounded-full flex items-center justify-center bg-indigo-50"><div className="w-2 h-2 bg-indigo-600 rounded-full"></div></div> 
+            F2 Mandatory
           </span>
-          <span className="flex items-center gap-3">
-            <div className="w-3.5 h-3.5 border-2 border-emerald-600 rounded flex items-center justify-center"><FileCheck size={10} className="text-emerald-600" /></div> 
-            F1 Optional (Multiple)
+          <span className="flex items-center gap-4">
+            <div className="w-5 h-5 border-2 border-emerald-600 rounded-lg flex items-center justify-center bg-emerald-50"><Check size={14} className="text-emerald-600 stroke-[3px]" /></div> 
+            F1 Optional
           </span>
-          <span className="flex items-center gap-3 text-indigo-600">
-            <Sparkles size={14} className="animate-pulse" /> Logic Recommended
+          <span className="flex items-center gap-4 text-indigo-600 px-5 py-2 rounded-full border border-indigo-100 bg-indigo-50/50 shadow-sm">
+            <Sparkles size={20} className="animate-pulse" /> Global Logic Matches: {systemRecommendedIds.size}
           </span>
         </div>
-        <div className="bg-slate-900 px-6 py-2.5 rounded-full text-white shadow-lg">
-          ACTIVE BOM PARTS: <span className="text-indigo-400 ml-1">{selectedIds.size + parts.filter(p => p.F_Code === 0).length}</span>
+        <div className="bg-slate-900 px-10 py-5 rounded-[2.5rem] text-white shadow-2xl flex items-center gap-4 border-b-4 border-indigo-500">
+          <div className="w-3 h-3 bg-emerald-400 rounded-full animate-pulse shadow-emerald-400 shadow-lg"></div>
+          ACTIVE CONFIGURATION SKU COUNT: <span className="text-indigo-400 text-lg font-mono tracking-tighter ml-2">{(selectedIds.size + parts.filter(p => p.F_Code === 0).length).toString().padStart(3, '0')}</span>
         </div>
       </div>
     </div>
