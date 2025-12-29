@@ -50,7 +50,14 @@ const App: React.FC = () => {
   const renderScreen = () => {
     switch (activeScreen) {
       case AppScreen.BOM_TABLE:
-        return <BOMTable parts={parts} onPartsUpdate={saveParts} onNavigate={() => setActiveScreen(AppScreen.CONFIG)} onClearAll={clearAllData} />;
+        return <BOMTable 
+          parts={parts} 
+          onPartsUpdate={saveParts} 
+          onRulesUpdate={saveRules}
+          existingRules={rules}
+          onNavigate={() => setActiveScreen(AppScreen.CONFIG)} 
+          onClearAll={clearAllData} 
+        />;
       case AppScreen.CONFIG:
         return <ConfigScreen rules={rules} onRulesUpdate={saveRules} parts={parts} />;
       case AppScreen.SELECTION:
@@ -67,7 +74,14 @@ const App: React.FC = () => {
           selectedIds={selectedPartIds} 
         />;
       default:
-        return <BOMTable parts={parts} onPartsUpdate={saveParts} onNavigate={() => setActiveScreen(AppScreen.CONFIG)} onClearAll={clearAllData} />;
+        return <BOMTable 
+          parts={parts} 
+          onPartsUpdate={saveParts} 
+          onRulesUpdate={saveRules}
+          existingRules={rules}
+          onNavigate={() => setActiveScreen(AppScreen.CONFIG)} 
+          onClearAll={clearAllData} 
+        />;
     }
   };
 
