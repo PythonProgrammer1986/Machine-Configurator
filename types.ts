@@ -24,10 +24,19 @@ export interface ConfigRule {
   isActive: boolean;
 }
 
+export interface LearningEntry {
+  category: string;
+  selection: string;
+  partNumber: string;
+  confirmedCount: number;
+}
+
+export type MachineKnowledge = Record<string, LearningEntry[]>; // Key is Model Name
+
 export enum AppScreen {
   BOM_TABLE = 'BOM_TABLE',
   CONFIG = 'CONFIG',
   SELECTION = 'SELECTION',
   BOM_GENERATED = 'BOM_GENERATED',
-  MO_PROVISION = 'MO_PROVISION' // Future Provision
+  MO_PROVISION = 'MO_PROVISION'
 }
