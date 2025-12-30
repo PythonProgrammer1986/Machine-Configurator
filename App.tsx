@@ -5,7 +5,7 @@ import BOMTable from './components/BOMTable';
 import ConfigScreen from './components/ConfigScreen';
 import SelectionScreen from './components/SelectionScreen';
 import BOMGenerated from './components/BOMGenerated';
-import { LayoutDashboard, Settings2, CheckSquare, FileText, Database } from 'lucide-react';
+import { LayoutDashboard, Settings2, CheckSquare, FileText, Database, FileStack } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeScreen, setActiveScreen] = useState<AppScreen>(AppScreen.BOM_TABLE);
@@ -72,7 +72,16 @@ const App: React.FC = () => {
         return <BOMGenerated 
           parts={parts} 
           selectedIds={selectedPartIds} 
+          rules={rules}
         />;
+      case AppScreen.MO_PROVISION:
+        return (
+          <div className="p-12 text-center h-full flex flex-col items-center justify-center space-y-4">
+             <FileStack size={64} className="text-slate-300" />
+             <h2 className="text-2xl font-bold text-slate-700">MO BOM Generation</h2>
+             <p className="text-slate-500 max-w-md">Future Provision: This module will allow automatic BOM generation based on Manufacturing Order (MO) copies. Coming soon.</p>
+          </div>
+        );
       default:
         return <BOMTable 
           parts={parts} 
@@ -89,7 +98,8 @@ const App: React.FC = () => {
     { id: AppScreen.BOM_TABLE, label: 'BOM Table', icon: LayoutDashboard },
     { id: AppScreen.CONFIG, label: 'Logic Config', icon: Settings2 },
     { id: AppScreen.SELECTION, label: 'Selection', icon: CheckSquare },
-    { id: AppScreen.BOM_GENERATED, label: 'BOM Generated', icon: FileText },
+    { id: AppScreen.MO_PROVISION, label: 'MO Generation', icon: FileStack },
+    { id: AppScreen.BOM_GENERATED, label: 'BOM Output', icon: FileText },
   ];
 
   return (

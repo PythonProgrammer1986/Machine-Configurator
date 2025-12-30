@@ -1,340 +1,358 @@
 
-import React, { useMemo, useCallback, useState, useEffect } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import { BOMPart, ConfigRule } from '../types';
 import { 
   CheckSquare, 
   Circle, 
   Square,
-  FileCheck, 
-  Zap, 
   ShieldCheck, 
   Sparkles,
   Search,
-  Settings2,
-  AlertCircle,
   Hash,
   Info,
-  Check
+  Check,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  UserCheck
 } from 'lucide-react';
 
 interface Props {
   parts: BOMPart[];
   rules: ConfigRule[];
-  selectedIds: Set<string>;
+  selectedIds: Set<string>; 
   onSelectionChange: (ids: Set<string>) => void;
   onGenerate: () => void;
 }
 
 const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelectionChange, onGenerate }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // Logic: Exclude F0 (defaults) from the selection UI as they are automatically in the BOM
-  const configParts = useMemo(() => {
-    return parts.filter(p => (p.F_Code === 1 || p.F_Code === 2));
-  }, [parts]);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-  // Logic: Advanced Selection Logic Engine
-  // Aggregates metadata from all current selections to trigger dependencies globally
-  const systemRecommendedIds = useMemo(() => {
-    const recommended = new Set<string>();
-    
-    // Include F_Code 0 (Defaults) in the trigger context
-    const activeContextParts = [
-      ...parts.filter(p => p.F_Code === 0),
-      ...parts.filter(p => selectedIds.has(p.id))
-    ];
-    
-    const globalMetadata = activeContextParts.map(p => 
-      `${p.Remarks} ${p.Std_Remarks}`.toUpperCase()
-    ).join(' ');
+  // Filter parts for configuration (F1/F2)
+  const configParts = useMemo(() => parts.filter(p => p.F_Code === 1 || p.F_Code === 2), [parts]);
 
-    rules.forEach(rule => {
-      const { includes, excludes, orGroups } = rule.logic;
-      
-      // Validation Logic:
-      // 1. All 'includes' keywords must be present (AND)
-      const allIncludesMet = includes.every(kw => globalMetadata.includes(kw));
-      
-      // 2. No 'excludes' keywords can be present (NOT)
-      const anyExcludesMet = excludes.some(kw => globalMetadata.includes(kw));
-      
-      // 3. At least one keyword from each 'orGroup' must be present (OR)
-      const allOrGroupsMet = orGroups.every(group => group.some(kw => globalMetadata.includes(kw)));
+  // Iterative Logic Solver (Fix-point iteration)
+  const logicSelectedIds = useMemo(() => {
+    let currentLogicSelected = new Set<string>();
+    let changed = true;
+    let iterations = 0;
+    const MAX_ITERATIONS = 10; // Safety break
 
-      if (allIncludesMet && !anyExcludesMet && allOrGroupsMet && (includes.length > 0 || orGroups.length > 0)) {
-        recommended.add(rule.targetPartId);
+    // Pre-calculate which parts are user-selected to speed up loops
+    const userSelectedParts = parts.filter(p => selectedIds.has(p.id));
+    const defaultParts = parts.filter(p => p.F_Code === 0);
+
+    while (changed && iterations < MAX_ITERATIONS) {
+      changed = false;
+      iterations++;
+
+      // Build context from Defaults + User Picks + current Logic Picks
+      const activeContextParts = [
+        ...defaultParts,
+        ...userSelectedParts,
+        ...parts.filter(p => currentLogicSelected.has(p.id))
+      ];
+
+      // Aggregate all metadata + the logic keywords of selected parts to allow propagation
+      const contextStrings = activeContextParts.map(p => {
+        const rule = rules.find(r => r.targetPartId === p.id);
+        return `${p.Part_Number} ${p.Name} ${p.Remarks} ${p.Std_Remarks} ${rule?.logic.raw || ''}`.toUpperCase();
+      });
+      const globalMetadata = ` ${contextStrings.join(' ')} `;
+
+      for (const rule of rules) {
+        if (!rule.isActive) continue;
+        if (selectedIds.has(rule.targetPartId) || currentLogicSelected.has(rule.targetPartId)) continue;
+
+        const part = parts.find(p => p.id === rule.targetPartId);
+        if (!part) continue;
+
+        // F2 Constraint: If this is an F2 part, don't logic-select it if the group already has a user pick
+        if (part.F_Code === 2 && userSelectedParts.some(up => up.Ref_des === part.Ref_des)) continue;
+        // F2 Constraint: Don't logic-select if another part in this F2 group is already logic-selected
+        if (part.F_Code === 2 && Array.from(currentLogicSelected).some(lsId => parts.find(p => p.id === lsId)?.Ref_des === part.Ref_des)) continue;
+
+        const { includes, excludes, orGroups } = rule.logic;
+        if (includes.length === 0 && orGroups.length === 0) continue;
+
+        // Use Regex for strict word boundary matching to avoid partial matches (CAB vs CABINET)
+        const checkMatch = (kw: string) => new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(globalMetadata);
+
+        const allIncludesMet = includes.every(kw => checkMatch(kw));
+        const anyExcludesMet = excludes.some(kw => checkMatch(kw));
+        const allOrGroupsMet = orGroups.every(group => group.some(kw => checkMatch(kw)));
+
+        if (allIncludesMet && !anyExcludesMet && allOrGroupsMet) {
+          currentLogicSelected.add(rule.targetPartId);
+          changed = true;
+        }
       }
-    });
+    }
 
-    return recommended;
+    return currentLogicSelected;
   }, [selectedIds, parts, rules]);
 
-  // Proactive Sync: Automatically select parts triggered by logic
-  useEffect(() => {
-    let hasChanges = false;
-    const nextSelected = new Set(selectedIds);
-    
-    systemRecommendedIds.forEach(id => {
-      if (!nextSelected.has(id)) {
-        const part = parts.find(p => p.id === id);
-        if (part && part.F_Code === 2) {
-          parts.filter(p => p.Ref_des === part.Ref_des && p.F_Code === 2).forEach(p => {
-            nextSelected.delete(p.id);
-          });
-        }
-        nextSelected.add(id);
-        hasChanges = true;
-      }
-    });
-
-    if (hasChanges) {
-      onSelectionChange(nextSelected);
-    }
-  }, [systemRecommendedIds, parts, onSelectionChange, selectedIds]);
-
-  // Grouping by Reference Designator
   const groupedParts = useMemo(() => {
     const groups: Record<string, BOMPart[]> = {};
     configParts.filter(p => {
       const q = searchTerm.toLowerCase();
-      return p.Part_Number.toLowerCase().includes(q) || 
-             p.Name.toLowerCase().includes(q) ||
-             p.Remarks.toLowerCase().includes(q) ||
-             p.Std_Remarks.toLowerCase().includes(q);
+      return p.Part_Number.toLowerCase().includes(q) || p.Name.toLowerCase().includes(q) || p.Remarks.toLowerCase().includes(q);
     }).forEach(p => {
-      const key = p.Ref_des || 'Standard Components';
+      const key = p.Ref_des || 'General';
       if (!groups[key]) groups[key] = [];
       groups[key].push(p);
     });
-    return Object.entries(groups).sort((a,b) => a[0].localeCompare(b[0]));
+
+    Object.keys(groups).forEach(key => groups[key].sort((a, b) => (a.Select_pref || 999999) - (b.Select_pref || 999999)));
+    return Object.entries(groups).sort((a, b) => {
+      const minA = Math.min(...a[1].map(p => p.Select_pref || 999999));
+      const minB = Math.min(...b[1].map(p => p.Select_pref || 999999));
+      return minA - minB;
+    });
   }, [configParts, searchTerm]);
 
-  // Validation: Mandatory F2 groups
   const validation = useMemo(() => {
-    const missing: string[] = [];
+    const missingMandatory: string[] = [];
     groupedParts.forEach(([group, items]) => {
-      const hasF2 = items.some(p => p.F_Code === 2);
-      if (hasF2) {
-        const isSelected = items.some(p => selectedIds.has(p.id) && p.F_Code === 2);
-        if (!isSelected) missing.push(group);
+      if (items.some(p => p.F_Code === 2) && !items.some(p => selectedIds.has(p.id) || logicSelectedIds.has(p.id))) {
+        missingMandatory.push(group);
       }
     });
-    const totalMandatory = groupedParts.filter(([_, items]) => items.some(p => p.F_Code === 2)).length;
-    const progress = totalMandatory > 0 ? Math.round(((totalMandatory - missing.length) / totalMandatory) * 100) : 100;
-    return { isValid: missing.length === 0, missing, progress };
-  }, [groupedParts, selectedIds]);
+    const totalF2 = groupedParts.filter(([_, items]) => items.some(p => p.F_Code === 2)).length;
+    const progress = totalF2 > 0 ? Math.round(((totalF2 - missingMandatory.length) / totalF2) * 100) : 100;
+    return { isValid: missingMandatory.length === 0, missingMandatory, progress };
+  }, [groupedParts, selectedIds, logicSelectedIds]);
 
   const toggleSelection = useCallback((part: BOMPart) => {
     const nextSelected = new Set(selectedIds);
-    
-    if (part.F_Code === 2) {
-      const groupItems = groupedParts.find(([k]) => k === part.Ref_des)?.[1] || [];
-      groupItems.forEach(p => {
-        if (p.F_Code === 2) nextSelected.delete(p.id);
-      });
-      nextSelected.add(part.id);
+    if (nextSelected.has(part.id)) {
+      nextSelected.delete(part.id);
     } else {
-      if (nextSelected.has(part.id)) {
-        nextSelected.delete(part.id);
-      } else {
-        nextSelected.add(part.id);
+      if (part.F_Code === 2) {
+        const groupItems = groupedParts.find(([k]) => k === part.Ref_des)?.[1] || [];
+        groupItems.forEach(p => nextSelected.delete(p.id));
       }
+      nextSelected.add(part.id);
     }
     onSelectionChange(nextSelected);
   }, [selectedIds, groupedParts, onSelectionChange]);
 
+  const toggleGroup = (group: string) => {
+    const next = new Set(expandedGroups);
+    if (next.has(group)) next.delete(group);
+    else next.add(group);
+    setExpandedGroups(next);
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      <div className="p-8 border-b border-slate-200 bg-white sticky top-0 z-30 shadow-sm">
-        <div className="flex flex-wrap justify-between items-center gap-8 max-w-[1600px] mx-auto w-full">
-          <div className="flex-1 min-w-[300px]">
-            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3 tracking-tight">
-              <div className="p-2.5 bg-indigo-600 text-white rounded-2xl shadow-indigo-100 shadow-lg">
-                <CheckSquare size={24} />
+      <div className="p-6 border-b border-slate-200 bg-white sticky top-0 z-30 shadow-sm">
+        <div className="flex flex-wrap justify-between items-center gap-6 max-w-[1600px] mx-auto w-full">
+          <div className="flex-1">
+            <h2 className="text-xl font-black text-slate-800 flex items-center gap-2 uppercase tracking-tight">
+              <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-md">
+                <CheckSquare size={20} />
               </div>
-              Engineering Configuration Selector
+              BOM Selection Catalog
             </h2>
-            <div className="mt-6 flex items-center gap-6">
-              <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200 shadow-inner">
+            <div className="mt-4 flex items-center gap-4">
+              <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
                 <div 
-                  className={`h-full transition-all duration-1000 ease-out ${validation.isValid ? 'bg-emerald-500' : 'bg-indigo-600'}`} 
+                  className={`h-full transition-all duration-700 ${validation.isValid ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'}`} 
                   style={{ width: `${validation.progress}%` }}
                 ></div>
               </div>
-              <span className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em]">{validation.progress}% Groups Valid</span>
+              <span className={`text-[10px] font-black uppercase tracking-widest ${validation.isValid ? 'text-emerald-600' : 'text-red-500'}`}>
+                {validation.progress}% Mandatory Satisfied
+              </span>
             </div>
           </div>
           
-          <div className="flex items-center gap-4">
-            <div className="relative group">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-600 transition-colors" size={20} />
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
               <input 
                 type="text" 
-                placeholder="Filter catalog..." 
+                placeholder="Search catalog..." 
                 value={searchTerm} 
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-12 pr-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-[2rem] text-sm font-bold focus:border-indigo-500 focus:bg-white focus:ring-8 focus:ring-indigo-500/5 transition-all outline-none w-96 shadow-sm"
+                className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:border-indigo-500 focus:bg-white outline-none w-64 transition-all"
               />
             </div>
             <button 
               onClick={onGenerate} 
               disabled={!validation.isValid} 
-              className={`px-10 py-4 rounded-[2rem] flex items-center gap-3 font-black transition-all shadow-xl text-xs uppercase tracking-[0.2em] border-b-4 active:border-b-0 active:translate-y-1 ${
+              className={`px-6 py-2.5 rounded-xl flex items-center gap-2 font-black transition-all text-[10px] uppercase tracking-widest shadow-lg ${
                 validation.isValid 
-                ? 'bg-indigo-600 border-indigo-800 hover:bg-indigo-700 text-white shadow-indigo-200' 
-                : 'bg-slate-200 border-slate-300 text-slate-400 cursor-not-allowed shadow-none'
+                ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100' 
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
               }`}
             >
-              <ShieldCheck size={20} /> Build Configured BOM
+              <ShieldCheck size={16} /> Finalize BOM
             </button>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-8 md:p-12 space-y-16 max-w-[1600px] mx-auto w-full">
-        {!validation.isValid && (
-          <div className="bg-amber-50 border-2 border-amber-200 p-6 rounded-[2.5rem] flex items-center gap-5 shadow-sm animate-in fade-in slide-in-from-top-4">
-            <div className="p-3.5 bg-white rounded-full text-amber-500 shadow-md ring-8 ring-amber-100/50"><AlertCircle size={28} /></div>
-            <div>
-              <p className="font-black text-amber-900 uppercase tracking-[0.2em] text-xs mb-1">Configuration Required</p>
-              <p className="text-amber-800 font-bold text-sm tracking-tight">Mandatory items missing for: <span className="bg-amber-200/40 px-3 py-1 rounded-xl border border-amber-300/50 ml-1">{validation.missing.join(', ')}</span></p>
-            </div>
-          </div>
-        )}
-
+      <div className="flex-1 overflow-auto p-6 md:p-8 space-y-6 max-w-[1600px] mx-auto w-full">
         {groupedParts.map(([group, items]) => {
-          const selectedInGroup = items.find(p => selectedIds.has(p.id) && p.F_Code === 2);
+          const isExpanded = expandedGroups.has(group) || searchTerm.length > 0;
+          const isF2Group = items.some(p => p.F_Code === 2);
+          const userSelectedInGroup = items.find(p => selectedIds.has(p.id));
+          const logicSelectedInGroup = items.find(p => logicSelectedIds.has(p.id));
           
+          const statusColor = userSelectedInGroup 
+            ? 'border-emerald-500 bg-emerald-50/20' 
+            : logicSelectedInGroup 
+              ? 'border-blue-500 bg-blue-50/20' 
+              : isF2Group 
+                ? 'border-red-500 bg-red-50/20 animate-pulse' 
+                : 'border-slate-200 bg-white';
+
+          const iconColor = userSelectedInGroup 
+            ? 'bg-emerald-600 text-white' 
+            : logicSelectedInGroup 
+              ? 'bg-blue-600 text-white' 
+              : isF2Group 
+                ? 'bg-red-600 text-white' 
+                : 'bg-slate-100 text-slate-400';
+
           return (
-            <div key={group} className="space-y-10">
-              <div className="flex items-center gap-6 sticky top-0 z-20 bg-slate-50/90 backdrop-blur-md py-4">
-                <div className="p-3.5 bg-slate-900 text-white rounded-2xl shadow-xl transform rotate-3">
-                  <Hash size={24} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-black text-slate-900 uppercase tracking-[0.3em] truncate">
-                    {group}
-                  </h3>
-                  {selectedInGroup && (
-                    <div className="text-[11px] text-indigo-600 font-black uppercase tracking-[0.2em] flex items-center gap-2 mt-1.5 animate-in fade-in slide-in-from-left-4">
-                      <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-ping"></div>
-                      Selected: <span className="text-slate-700 bg-white px-3 py-0.5 rounded-full border border-slate-200 shadow-sm ml-1">{selectedInGroup.Name}</span>
+            <div key={group} className={`border rounded-[2rem] overflow-hidden transition-all shadow-sm ${statusColor}`}>
+              <button onClick={() => toggleGroup(group)} className="w-full px-8 py-5 flex items-center justify-between hover:bg-white/40 transition-colors">
+                <div className="flex items-center gap-6">
+                  <div className={`p-3 rounded-xl shadow-sm ${iconColor}`}>
+                    <Hash size={20} />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-[0.15em] flex items-center gap-2">
+                      {group} <span className="text-slate-300">|</span> 
+                      <span className="normal-case font-bold text-slate-600 text-sm">{items[0]?.Name}</span>
+                    </h3>
+                    <div className="flex gap-4 mt-1.5">
+                       {userSelectedInGroup ? (
+                         <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1.5 bg-white px-2 py-0.5 rounded-full border border-emerald-100 shadow-sm">
+                           <UserCheck size={10} /> Selection Confirmed
+                         </span>
+                       ) : logicSelectedInGroup ? (
+                         <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-1.5 bg-white px-2 py-0.5 rounded-full border border-blue-100 shadow-sm">
+                           <Sparkles size={10} /> Logic Propagated
+                         </span>
+                       ) : isF2Group ? (
+                         <span className="text-[9px] font-black text-red-600 uppercase tracking-widest flex items-center gap-1.5">
+                           <AlertTriangle size={10} /> Action Required
+                         </span>
+                       ) : (
+                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Optional Items</span>
+                       )}
                     </div>
-                  )}
+                  </div>
                 </div>
-                <div className="h-px bg-slate-200 flex-[0.6]"></div>
-              </div>
+                {isExpanded ? <ChevronUp size={24} className="text-slate-400" /> : <ChevronDown size={24} className="text-slate-400" />}
+              </button>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
-                {items.map(part => {
-                  const isSelected = selectedIds.has(part.id);
-                  const isSystemSelected = systemRecommendedIds.has(part.id);
-                  const isF2 = part.F_Code === 2;
+              {isExpanded && (
+                <div className="p-8 pt-0 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {items.map(part => {
+                    const isUser = selectedIds.has(part.id);
+                    const isLogic = logicSelectedIds.has(part.id);
+                    const isF2 = part.F_Code === 2;
+                    
+                    const isGreen = isUser;
+                    const isBlue = isLogic && !isUser;
+                    const isRed = isF2 && !userSelectedInGroup && !logicSelectedInGroup;
 
-                  return (
-                    <button
-                      key={part.id}
-                      onClick={() => toggleSelection(part)}
-                      className={`group relative flex flex-col text-left p-8 rounded-[3rem] border-2 transition-all duration-500 transform active:scale-95 ${
-                        isSelected 
-                          ? isF2 
-                            ? 'border-indigo-600 bg-white shadow-2xl ring-[14px] ring-indigo-50/60 scale-[1.02] z-10' 
-                            : 'border-emerald-600 bg-white shadow-2xl ring-[14px] ring-emerald-50/60 scale-[1.02] z-10'
-                          : 'border-white bg-white shadow-md hover:border-slate-200 hover:shadow-2xl hover:translate-y-[-6px]'
-                      } ${isSystemSelected && isSelected ? 'bg-indigo-50/20' : ''}`}
-                    >
-                      {isSystemSelected && (
-                        <div className="absolute -top-4 left-10 px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-full shadow-xl flex items-center gap-2 z-20 border-2 border-white animate-in zoom-in">
-                          <Sparkles size={12} className="animate-pulse" /> Verified Logic
-                        </div>
-                      )}
-
-                      <div className="absolute top-8 right-8">
-                        <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border shadow-sm flex items-center gap-1.5 ${
-                          isF2 ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                        }`}>
-                          <Info size={12} />
-                          {isF2 ? 'F2: Mandatory' : 'F1: Optional'}
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between items-start mb-6">
-                        <div className="flex flex-col">
-                          <span className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 font-mono">
+                    return (
+                      <button
+                        key={part.id}
+                        onClick={() => toggleSelection(part)}
+                        className={`flex flex-col text-left p-6 rounded-3xl border-2 transition-all duration-300 relative transform active:scale-95 group ${
+                          isGreen 
+                            ? 'border-emerald-500 bg-white ring-8 ring-emerald-500/10 shadow-lg scale-[1.02]' 
+                            : isBlue 
+                              ? 'border-blue-500 bg-white ring-8 ring-blue-500/10 shadow-lg scale-[1.02]'
+                              : isRed
+                                ? 'border-red-500 bg-red-50/50 hover:bg-white hover:border-red-400'
+                                : 'border-transparent bg-slate-100/50 hover:bg-white hover:border-slate-200'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start mb-4">
+                          <span className={`text-[10px] font-black font-mono tracking-widest ${isGreen ? 'text-emerald-600' : isBlue ? 'text-blue-600' : isRed ? 'text-red-500' : 'text-slate-400'}`}>
                             {part.Part_Number}
                           </span>
-                          <div className={`h-2 w-16 rounded-full transition-all duration-700 shadow-sm ${isSelected ? (isF2 ? 'bg-indigo-600 w-28' : 'bg-emerald-600 w-28') : 'bg-slate-100'}`}></div>
+                          <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${
+                            isGreen ? 'bg-emerald-600 border-emerald-600 shadow-md' :
+                            isBlue ? 'bg-blue-600 border-blue-600 shadow-md' :
+                            isRed ? 'border-red-300' : 'border-slate-100'
+                          }`}>
+                            {isGreen ? <UserCheck size={14} className="text-white" /> :
+                             isBlue ? <Sparkles size={14} className="text-white" /> :
+                             isF2 ? <Circle size={14} className={isRed ? 'text-red-200' : 'text-slate-200'} /> :
+                             <Square size={14} className="text-slate-200" />}
+                          </div>
                         </div>
-                        
-                        <div className={`w-11 h-11 rounded-full border-2 flex items-center justify-center transition-all duration-500 ${
-                          isSelected 
-                            ? isF2 ? 'bg-indigo-600 border-indigo-600 shadow-lg shadow-indigo-200' : 'bg-emerald-600 border-emerald-600 shadow-lg shadow-emerald-200'
-                            : 'border-slate-100 group-hover:border-slate-300 group-hover:bg-slate-50'
-                        }`}>
-                          {isSelected ? (
-                            isF2 ? <div className="w-4 h-4 rounded-full bg-white shadow-sm"></div> : <Check size={22} className="text-white stroke-[3px]" />
-                          ) : (
-                            isF2 ? <Circle size={18} className="text-slate-100" /> : <Square size={18} className="text-slate-100" />
+
+                        <div className="space-y-3 flex-1">
+                          <p className={`text-sm font-black leading-tight ${isGreen || isBlue ? 'text-slate-900' : isRed ? 'text-red-800' : 'text-slate-700'}`}>
+                            {part.Name}
+                          </p>
+                          <p className="text-[10px] font-medium text-slate-500 italic line-clamp-2">
+                            {part.Remarks || 'Standard BOM Entry'}
+                          </p>
+                          {part.Std_Remarks && (
+                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100 inline-block">
+                              {part.Std_Remarks}
+                            </div>
                           )}
                         </div>
-                      </div>
 
-                      <p className={`text-xl font-black leading-tight mb-8 min-h-[3rem] line-clamp-2 transition-colors ${isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
-                        {part.Name}
-                      </p>
-                      
-                      <div className="mt-auto space-y-6">
-                        <div className="space-y-2">
-                          <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest block">Technical Specs</span>
-                          <p className={`text-[13px] font-bold italic leading-relaxed line-clamp-2 ${isSelected ? 'text-slate-600' : 'text-slate-400'}`}>
-                            {part.Remarks || 'Standard engineering part.'}
-                          </p>
+                        <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
+                           <div className={`text-[8px] font-black uppercase tracking-widest ${isF2 ? 'text-amber-600' : 'text-slate-400'}`}>
+                             {isF2 ? 'F2 Mandatory' : 'F1 Optional'}
+                           </div>
+                           <div className="flex gap-1.5">
+                              {isBlue && (
+                                <div className="flex items-center gap-1 text-[8px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-1.5 py-0.5 rounded-md">
+                                  <Sparkles size={10} /> Dependency
+                                </div>
+                              )}
+                              {isGreen && (
+                                <div className="flex items-center gap-1 text-[8px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-1.5 py-0.5 rounded-md">
+                                  <Check size={10} /> Confirmed
+                                </div>
+                              )}
+                           </div>
                         </div>
-
-                        {part.Std_Remarks && (
-                          <div className={`flex items-center gap-2.5 text-[10px] px-4 py-2.5 rounded-[1.25rem] font-black border-2 w-fit transition-all shadow-sm ${
-                            isSelected 
-                              ? isF2 ? 'text-indigo-700 bg-indigo-50 border-indigo-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200'
-                              : 'text-slate-500 bg-slate-50 border-slate-100 group-hover:bg-slate-100 group-hover:border-slate-200'
-                          }`}>
-                            <Zap size={14} className={isSelected ? 'fill-current' : 'text-slate-300'} />
-                            {part.Std_Remarks.toUpperCase()}
-                          </div>
-                        )}
-
-                        {isSystemSelected && isSelected && (
-                          <div className="pt-5 border-t border-slate-100 flex items-center gap-2 animate-in slide-in-from-bottom-2 fade-in">
-                            <Settings2 size={16} className="text-indigo-600" />
-                            <span className="text-[11px] font-black text-indigo-700 uppercase tracking-tight">Active via System Logic</span>
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
 
-      <div className="p-10 bg-white border-t border-slate-200 flex flex-wrap justify-between items-center gap-8 text-[11px] font-black uppercase tracking-[0.3em] text-slate-400">
-        <div className="flex gap-12">
-          <span className="flex items-center gap-4">
-            <div className="w-5 h-5 border-2 border-indigo-600 rounded-full flex items-center justify-center bg-indigo-50"><div className="w-2 h-2 bg-indigo-600 rounded-full"></div></div> 
-            F2 Mandatory
-          </span>
-          <span className="flex items-center gap-4">
-            <div className="w-5 h-5 border-2 border-emerald-600 rounded-lg flex items-center justify-center bg-emerald-50"><Check size={14} className="text-emerald-600 stroke-[3px]" /></div> 
-            F1 Optional
-          </span>
-          <span className="flex items-center gap-4 text-indigo-600 px-5 py-2 rounded-full border border-indigo-100 bg-indigo-50/50 shadow-sm">
-            <Sparkles size={20} className="animate-pulse" /> Global Logic Matches: {systemRecommendedIds.size}
-          </span>
+      <div className="p-6 bg-white border-t border-slate-200 flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+        <div className="flex gap-10">
+          <div className="flex items-center gap-2.5">
+            <div className="w-4 h-4 bg-red-500 rounded-lg shadow-sm"></div> Required
+          </div>
+          <div className="flex items-center gap-2.5">
+            <div className="w-4 h-4 bg-blue-500 rounded-lg shadow-sm"></div> Logic Suggestion
+          </div>
+          <div className="flex items-center gap-2.5">
+            <div className="w-4 h-4 bg-emerald-500 rounded-lg shadow-sm"></div> User Confirm
+          </div>
         </div>
-        <div className="bg-slate-900 px-10 py-5 rounded-[2.5rem] text-white shadow-2xl flex items-center gap-4 border-b-4 border-indigo-500">
-          <div className="w-3 h-3 bg-emerald-400 rounded-full animate-pulse shadow-emerald-400 shadow-lg"></div>
-          ACTIVE CONFIGURATION SKU COUNT: <span className="text-indigo-400 text-lg font-mono tracking-tighter ml-2">{(selectedIds.size + parts.filter(p => p.F_Code === 0).length).toString().padStart(3, '0')}</span>
+        <div className="text-slate-900 bg-slate-50 px-6 py-3 rounded-2xl border border-slate-100 flex items-center gap-3">
+          <span className="text-slate-400">Total Configured Items:</span>
+          <span className="text-indigo-600 text-lg font-mono">
+             {(selectedIds.size + 
+               logicSelectedIds.size + 
+               parts.filter(p => p.F_Code === 0).length).toString().padStart(3, '0')}
+          </span>
         </div>
       </div>
     </div>

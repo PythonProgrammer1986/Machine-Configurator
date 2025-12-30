@@ -6,6 +6,7 @@ export interface BOMPart {
   Std_Remarks: string;
   F_Code: number; // 0: Default, 1: Optional Multiple, 2: Mandatory Single, 9: Reference Only
   Ref_des: string;
+  Select_pref: number; // Sorting preference
   id: string; // Internal unique ID
 }
 
@@ -27,5 +28,6 @@ export enum AppScreen {
   BOM_TABLE = 'BOM_TABLE',
   CONFIG = 'CONFIG',
   SELECTION = 'SELECTION',
-  BOM_GENERATED = 'BOM_GENERATED'
+  BOM_GENERATED = 'BOM_GENERATED',
+  MO_PROVISION = 'MO_PROVISION' // Future Provision
 }

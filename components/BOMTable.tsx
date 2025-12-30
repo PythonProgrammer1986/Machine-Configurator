@@ -136,6 +136,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
         Std_Remarks: String(row.Std_Remarks || ''),
         F_Code: isNaN(parseInt(row.F_Code)) ? 0 : parseInt(row.F_Code),
         Ref_des: String(row.Ref_des || ''),
+        Select_pref: isNaN(parseInt(row.Select_pref)) ? 999999 : parseInt(row.Select_pref),
       }));
 
       onPartsUpdate(mappedParts);
@@ -152,7 +153,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
             <FileSpreadsheet className="text-indigo-600" />
             BOM Repository Management
           </h2>
-          <p className="text-sm text-slate-500 font-medium">Import Teamcenter data with optional 'Logic' column.</p>
+          <p className="text-sm text-slate-500 font-medium">Import Teamcenter data with optional 'Logic' and 'Select_pref' columns.</p>
         </div>
         <div className="flex gap-2">
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls,.csv" className="hidden" />
