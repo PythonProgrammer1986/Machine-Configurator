@@ -9,12 +9,17 @@ export interface BOMPart {
   id: string; // Internal unique ID
 }
 
-export type LogicOperator = 'CONTAINS' | 'EQUALS' | 'STARTS_WITH';
+export interface RuleLogic {
+  includes: string[];  // AND conditions (must all be present)
+  excludes: string[];  // NOT conditions (must all be absent)
+  orGroups: string[][]; // OR groups (at least one from each group must be present)
+  raw: string;         // Original string for display/editing
+}
 
 export interface ConfigRule {
   id: string;
   targetPartId: string; 
-  keywords: string[]; // List of keywords that must ALL be present (AND logic)
+  logic: RuleLogic;
   isActive: boolean;
 }
 

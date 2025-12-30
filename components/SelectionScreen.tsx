@@ -33,31 +33,35 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     return parts.filter(p => (p.F_Code === 1 || p.F_Code === 2));
   }, [parts]);
 
-  // Logic: Cross-Ref_des Selection Logic Engine
+  // Logic: Advanced Selection Logic Engine
   // Aggregates metadata from all current selections to trigger dependencies globally
   const systemRecommendedIds = useMemo(() => {
     const recommended = new Set<string>();
     
-    // Include F_Code 0 (Defaults) in the trigger context as they are always 'active'
+    // Include F_Code 0 (Defaults) in the trigger context
     const activeContextParts = [
       ...parts.filter(p => p.F_Code === 0),
       ...parts.filter(p => selectedIds.has(p.id))
     ];
     
-    // Combine remarks and std_remarks from all active parts into one searchable string
     const globalMetadata = activeContextParts.map(p => 
       `${p.Remarks} ${p.Std_Remarks}`.toUpperCase()
     ).join(' ');
 
     rules.forEach(rule => {
-      // AND Logic: Every keyword in the rule must be found in the global metadata
-      if (rule.keywords.length === 0) return;
+      const { includes, excludes, orGroups } = rule.logic;
       
-      const isMet = rule.keywords.every(kw => 
-        globalMetadata.includes(kw.toUpperCase())
-      );
+      // Validation Logic:
+      // 1. All 'includes' keywords must be present (AND)
+      const allIncludesMet = includes.every(kw => globalMetadata.includes(kw));
       
-      if (isMet) {
+      // 2. No 'excludes' keywords can be present (NOT)
+      const anyExcludesMet = excludes.some(kw => globalMetadata.includes(kw));
+      
+      // 3. At least one keyword from each 'orGroup' must be present (OR)
+      const allOrGroupsMet = orGroups.every(group => group.some(kw => globalMetadata.includes(kw)));
+
+      if (allIncludesMet && !anyExcludesMet && allOrGroupsMet && (includes.length > 0 || orGroups.length > 0)) {
         recommended.add(rule.targetPartId);
       }
     });
@@ -72,10 +76,8 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     
     systemRecommendedIds.forEach(id => {
       if (!nextSelected.has(id)) {
-        // Find the part to check its Ref_des grouping for F2 enforcement
         const part = parts.find(p => p.id === id);
         if (part && part.F_Code === 2) {
-          // If system recommends an F2 part, clear other F2s in that group first
           parts.filter(p => p.Ref_des === part.Ref_des && p.F_Code === 2).forEach(p => {
             nextSelected.delete(p.id);
           });
@@ -107,7 +109,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     return Object.entries(groups).sort((a,b) => a[0].localeCompare(b[0]));
   }, [configParts, searchTerm]);
 
-  // Validation: Ensure mandatory F2 groups have exactly one selection
+  // Validation: Mandatory F2 groups
   const validation = useMemo(() => {
     const missing: string[] = [];
     groupedParts.forEach(([group, items]) => {
@@ -126,14 +128,12 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     const nextSelected = new Set(selectedIds);
     
     if (part.F_Code === 2) {
-      // Logic: Only one selection allowed for F_Code 2 within same Ref_des (Radio Button logic)
       const groupItems = groupedParts.find(([k]) => k === part.Ref_des)?.[1] || [];
       groupItems.forEach(p => {
         if (p.F_Code === 2) nextSelected.delete(p.id);
       });
       nextSelected.add(part.id);
     } else {
-      // Logic: Multiple selections allowed for F_Code 1 (Checkbox logic)
       if (nextSelected.has(part.id)) {
         nextSelected.delete(part.id);
       } else {
@@ -145,7 +145,6 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      {/* Dynamic Header */}
       <div className="p-8 border-b border-slate-200 bg-white sticky top-0 z-30 shadow-sm">
         <div className="flex flex-wrap justify-between items-center gap-8 max-w-[1600px] mx-auto w-full">
           <div className="flex-1 min-w-[300px]">
@@ -171,7 +170,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-600 transition-colors" size={20} />
               <input 
                 type="text" 
-                placeholder="Filter by SKU, Name or Remark..." 
+                placeholder="Filter catalog..." 
                 value={searchTerm} 
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-12 pr-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-[2rem] text-sm font-bold focus:border-indigo-500 focus:bg-white focus:ring-8 focus:ring-indigo-500/5 transition-all outline-none w-96 shadow-sm"
@@ -192,7 +191,6 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
         </div>
       </div>
 
-      {/* Main Selection Surface */}
       <div className="flex-1 overflow-auto p-8 md:p-12 space-y-16 max-w-[1600px] mx-auto w-full">
         {!validation.isValid && (
           <div className="bg-amber-50 border-2 border-amber-200 p-6 rounded-[2.5rem] flex items-center gap-5 shadow-sm animate-in fade-in slide-in-from-top-4">
@@ -205,8 +203,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
         )}
 
         {groupedParts.map(([group, items]) => {
-          // Logic: Display the name of the currently selected part in the group header
-          const selectedInGroup = items.find(p => selectedIds.has(p.id));
+          const selectedInGroup = items.find(p => selectedIds.has(p.id) && p.F_Code === 2);
           
           return (
             <div key={group} className="space-y-10">
@@ -246,14 +243,12 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                           : 'border-white bg-white shadow-md hover:border-slate-200 hover:shadow-2xl hover:translate-y-[-6px]'
                       } ${isSystemSelected && isSelected ? 'bg-indigo-50/20' : ''}`}
                     >
-                      {/* Logic Identity Tag */}
                       {isSystemSelected && (
                         <div className="absolute -top-4 left-10 px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-full shadow-xl flex items-center gap-2 z-20 border-2 border-white animate-in zoom-in">
                           <Sparkles size={12} className="animate-pulse" /> Verified Logic
                         </div>
                       )}
 
-                      {/* Type Badge */}
                       <div className="absolute top-8 right-8">
                         <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border shadow-sm flex items-center gap-1.5 ${
                           isF2 ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
@@ -265,14 +260,12 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
 
                       <div className="flex justify-between items-start mb-6">
                         <div className="flex flex-col">
-                          {/* Metadata: Part Number */}
                           <span className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 font-mono">
                             {part.Part_Number}
                           </span>
                           <div className={`h-2 w-16 rounded-full transition-all duration-700 shadow-sm ${isSelected ? (isF2 ? 'bg-indigo-600 w-28' : 'bg-emerald-600 w-28') : 'bg-slate-100'}`}></div>
                         </div>
                         
-                        {/* Selector UI Icon (Radio vs Checkbox style) */}
                         <div className={`w-11 h-11 rounded-full border-2 flex items-center justify-center transition-all duration-500 ${
                           isSelected 
                             ? isF2 ? 'bg-indigo-600 border-indigo-600 shadow-lg shadow-indigo-200' : 'bg-emerald-600 border-emerald-600 shadow-lg shadow-emerald-200'
@@ -286,13 +279,11 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                         </div>
                       </div>
 
-                      {/* Metadata: Name */}
                       <p className={`text-xl font-black leading-tight mb-8 min-h-[3rem] line-clamp-2 transition-colors ${isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
                         {part.Name}
                       </p>
                       
                       <div className="mt-auto space-y-6">
-                        {/* Metadata: Technical Remarks */}
                         <div className="space-y-2">
                           <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest block">Technical Specs</span>
                           <p className={`text-[13px] font-bold italic leading-relaxed line-clamp-2 ${isSelected ? 'text-slate-600' : 'text-slate-400'}`}>
@@ -300,7 +291,6 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                           </p>
                         </div>
 
-                        {/* Metadata: Std Remarks Label */}
                         {part.Std_Remarks && (
                           <div className={`flex items-center gap-2.5 text-[10px] px-4 py-2.5 rounded-[1.25rem] font-black border-2 w-fit transition-all shadow-sm ${
                             isSelected 
@@ -312,7 +302,6 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                           </div>
                         )}
 
-                        {/* Recommendation Feedback */}
                         {isSystemSelected && isSelected && (
                           <div className="pt-5 border-t border-slate-100 flex items-center gap-2 animate-in slide-in-from-bottom-2 fade-in">
                             <Settings2 size={16} className="text-indigo-600" />
@@ -329,7 +318,6 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
         })}
       </div>
 
-      {/* Persistence / Summary Footer */}
       <div className="p-10 bg-white border-t border-slate-200 flex flex-wrap justify-between items-center gap-8 text-[11px] font-black uppercase tracking-[0.3em] text-slate-400">
         <div className="flex gap-12">
           <span className="flex items-center gap-4">

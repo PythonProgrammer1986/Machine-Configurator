@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
-import { ConfigRule, BOMPart } from '../types';
-import { Settings, Plus, X, Download, Upload, Edit3, Save, Search } from 'lucide-react';
+import { ConfigRule, BOMPart, RuleLogic } from '../types';
+import { Settings, Plus, X, Download, Upload, Edit3, Save, Search, HelpCircle, Wand2 } from 'lucide-react';
 
 interface Props {
   rules: ConfigRule[];
@@ -20,8 +20,77 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
 
   const selectableParts = parts.filter(p => p.F_Code === 1 || p.F_Code === 2);
 
-  const parseKeywords = (str: string) => {
-    return str.split(/[\s+,._/]+/).map(k => k.trim().toUpperCase()).filter(k => k.length > 0);
+  const parseLogicString = (str: string): RuleLogic => {
+    const orGroups: string[][] = [];
+    const excludes: string[] = [];
+    const includes: string[] = [];
+    let workingStr = str || '';
+
+    // 1. Extract OR groups: (CAB/CAN)
+    const orRegex = /\(([^)]+)\)/g;
+    let orMatch;
+    while ((orMatch = orRegex.exec(str)) !== null) {
+      const group = orMatch[1].split('/').map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
+      if (group.length > 0) orGroups.push(group);
+      workingStr = workingStr.replace(orMatch[0], ' ');
+    }
+
+    // 2. Extract NOT groups: [TT BT]
+    const notRegex = /\[([^\]]+)\]/g;
+    let notMatch;
+    while ((notMatch = notRegex.exec(str)) !== null) {
+      const items = notMatch[1].split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
+      excludes.push(...items);
+      workingStr = workingStr.replace(notMatch[0], ' ');
+    }
+
+    // 3. Extract AND keywords: remaining words separated by space
+    const remaining = workingStr.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
+    includes.push(...remaining);
+
+    return {
+      includes,
+      excludes,
+      orGroups,
+      raw: str
+    };
+  };
+
+  const autoGenerateMissingRules = () => {
+    const KEYWORDS_DICT = ['CAB', 'ENGINE', 'CANOPY', 'OIL', 'FUEL', 'FLUID', 'HYDRAULIC', 'AIR', 'PRESSURE', 'HEATER', 'LIGHT', 'AC', 'STD'];
+    const newRules: ConfigRule[] = [...rules];
+    let count = 0;
+
+    selectableParts.forEach(part => {
+      // Skip if part already has a rule
+      if (newRules.some(r => r.targetPartId === part.id)) return;
+
+      const metadata = (part.Remarks + ' ' + part.Std_Remarks).toUpperCase();
+      const words = metadata.split(/[\s,._+/]+/).filter(w => w.length > 1);
+      const matchedKeywords = Array.from(new Set(words.filter(word => KEYWORDS_DICT.includes(word))));
+
+      if (matchedKeywords.length > 0) {
+        newRules.push({
+          id: `auto-${Date.now()}-${count}`,
+          targetPartId: part.id,
+          logic: {
+            includes: matchedKeywords,
+            excludes: [],
+            orGroups: [],
+            raw: matchedKeywords.join(' ')
+          },
+          isActive: true
+        });
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      onRulesUpdate(newRules);
+      alert(`Successfully auto-generated ${count} new logic rules!`);
+    } else {
+      alert("No new logic patterns discovered in existing part remarks.");
+    }
   };
 
   const addRule = () => {
@@ -33,7 +102,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
     const rule: ConfigRule = {
       id: `rule-${Date.now()}`,
       targetPartId: newRule.targetPartId,
-      keywords: parseKeywords(newRule.keywordString),
+      logic: parseLogicString(newRule.keywordString),
       isActive: true
     };
 
@@ -41,8 +110,8 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
     setNewRule({ targetPartId: '', keywordString: '' });
   };
 
-  const updateRule = (id: string, updatedFields: Partial<ConfigRule>) => {
-    onRulesUpdate(rules.map(r => r.id === id ? { ...r, ...updatedFields } : r));
+  const updateRule = (id: string, rawString: string) => {
+    onRulesUpdate(rules.map(r => r.id === id ? { ...r, logic: parseLogicString(rawString) } : r));
     setEditingRuleId(null);
   };
 
@@ -51,13 +120,12 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
   };
 
   const exportConfig = () => {
-    // Requirement: Export logic with specific columns
     const exportData = rules.map(rule => {
       const p = parts.find(part => part.id === rule.targetPartId);
       return {
         Part_Number: p?.Part_Number || 'Unknown',
         Name: p?.Name || 'Unknown',
-        Contains: rule.keywords.join(' + '),
+        Logic: rule.logic.raw,
         Std_Remarks: p?.Std_Remarks || '',
         Remarks: p?.Remarks || ''
       };
@@ -81,13 +149,15 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
       
       const importedRules: ConfigRule[] = data.map((row: any) => {
         const part = parts.find(p => p.Part_Number === String(row.Part_Number || ''));
+        const rawLogic = String(row.Logic || row.Logic_Config || row.Contains || '');
+        if (!part || !rawLogic) return null;
         return {
           id: `imp-${Date.now()}-${Math.random()}`,
-          targetPartId: part?.id || '',
-          keywords: parseKeywords(String(row.Contains || '')),
+          targetPartId: part.id,
+          logic: parseLogicString(rawLogic),
           isActive: true
         };
-      }).filter(r => r.targetPartId !== '');
+      }).filter((r): r is ConfigRule => r !== null);
 
       onRulesUpdate([...rules, ...importedRules]);
     };
@@ -102,9 +172,15 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
             <Settings className="text-indigo-600" />
             Engineering Logic Management
           </h2>
-          <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Configure SKU dependencies using technical keyword triggers</p>
+          <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Configure SKU dependencies using advanced syntax triggers</p>
         </div>
         <div className="flex gap-2">
+          <button 
+            onClick={autoGenerateMissingRules}
+            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-black border border-emerald-200 transition-all shadow-sm"
+          >
+            <Wand2 size={14} /> Smart Auto-Generate
+          </button>
           <input type="file" ref={fileInputRef} onChange={importConfig} accept=".xlsx,.xls,.csv" className="hidden" />
           <button onClick={() => fileInputRef.current?.click()} className="bg-white hover:bg-slate-50 text-slate-600 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-bold border border-slate-200 transition-all shadow-sm">
             <Upload size={14} /> Import Rules
@@ -116,6 +192,20 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
       </div>
 
       <div className="p-6 space-y-6">
+        {/* HELP TOOLTIP */}
+        <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex gap-4 items-start">
+          <HelpCircle className="text-indigo-500 shrink-0 mt-0.5" size={18} />
+          <div className="text-xs text-indigo-900 leading-relaxed">
+            <p className="font-black uppercase mb-1">Advanced Logic Syntax Guide:</p>
+            <ul className="list-disc ml-4 space-y-1">
+              <li><span className="font-bold">AND:</span> Separate keywords with spaces. Example: <code className="bg-white px-1 rounded font-mono">CAB STD</code> (Must have CAB and STD)</li>
+              <li><span className="font-bold">OR:</span> Wrap options in parentheses with slashes. Example: <code className="bg-white px-1 rounded font-mono">(CAB/CAN)</code> (Must have CAB or CAN)</li>
+              <li><span className="font-bold">NOT:</span> Wrap excluded keywords in square brackets. Example: <code className="bg-white px-1 rounded font-mono">[TT BT]</code> (Must not have TT and must not have BT)</li>
+              <li><span className="font-bold">Combination:</span> <code className="bg-white px-1 rounded font-mono">(CAB/CAN) STD [TT BT]</code> (CAB or CAN, plus STD, but no TT or BT)</li>
+            </ul>
+          </div>
+        </div>
+
         {/* NEW RULE FORM */}
         <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
           <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
@@ -123,7 +213,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
             New Dependency Definition
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
-            <div className="md:col-span-5 space-y-2">
+            <div className="md:col-span-4 space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Target Component (SKU)</label>
               <select 
                 value={newRule.targetPartId}
@@ -134,11 +224,11 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
                 {selectableParts.map(p => <option key={p.id} value={p.id}>{p.Part_Number} — {p.Name}</option>)}
               </select>
             </div>
-            <div className="md:col-span-5 space-y-2">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Trigger Keywords (Combined AND logic)</label>
+            <div className="md:col-span-6 space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Trigger Expression (e.g. (CAB/CAN) STD [TT BT])</label>
               <input 
                 type="text"
-                placeholder="e.g. AC STD CAB"
+                placeholder="Expression syntax..."
                 value={newRule.keywordString}
                 onChange={(e) => setNewRule({...newRule, keywordString: e.target.value})}
                 className="w-full border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/5 transition-all bg-slate-50/50"
@@ -180,7 +270,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
               rules.filter(r => {
                 const p = parts.find(part => part.id === r.targetPartId);
                 const search = searchTerm.toLowerCase();
-                return p?.Part_Number.toLowerCase().includes(search) || r.keywords.join(' ').toLowerCase().includes(search);
+                return p?.Part_Number.toLowerCase().includes(search) || r.logic.raw.toLowerCase().includes(search);
               }).map((rule) => {
                 const p = parts.find(part => part.id === rule.targetPartId);
                 const isEditing = editingRuleId === rule.id;
@@ -196,20 +286,23 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts }) => {
                         </div>
                       </div>
                       <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                         <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest min-w-[80px]">If contains:</div>
+                         <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest min-w-[100px]">Triggers if:</div>
                          {isEditing ? (
                            <input 
                              type="text"
-                             defaultValue={rule.keywords.join(' ')}
-                             onBlur={(e) => updateRule(rule.id, { keywords: parseKeywords(e.target.value) })}
+                             defaultValue={rule.logic.raw}
+                             onBlur={(e) => updateRule(rule.id, e.target.value)}
                              className="flex-1 border-2 border-indigo-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none ring-4 ring-indigo-500/10"
                              autoFocus
                            />
                          ) : (
-                           <div className="flex flex-wrap gap-2">
-                             {rule.keywords.map((k, i) => (
-                               <span key={i} className="px-3 py-1 bg-white text-indigo-700 border border-slate-200 rounded-lg text-[10px] font-black shadow-sm">{k}</span>
-                             ))}
+                           <div className="flex flex-wrap gap-2 items-center">
+                             <span className="text-xs font-mono font-bold text-indigo-700 bg-white px-3 py-1 rounded-lg border border-slate-200 shadow-sm">{rule.logic.raw}</span>
+                             <div className="flex gap-1">
+                               {rule.logic.includes.map((k, i) => <span key={i} className="text-[8px] bg-emerald-50 text-emerald-700 px-1 rounded border border-emerald-100">AND {k}</span>)}
+                               {rule.logic.orGroups.map((g, i) => <span key={i} className="text-[8px] bg-indigo-50 text-indigo-700 px-1 rounded border border-indigo-100">OR ({g.join('/')})</span>)}
+                               {rule.logic.excludes.map((k, i) => <span key={i} className="text-[8px] bg-red-50 text-red-700 px-1 rounded border border-red-100">NOT {k}</span>)}
+                             </div>
                            </div>
                          )}
                       </div>

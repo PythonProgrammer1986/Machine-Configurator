@@ -1,6 +1,6 @@
 
 import React, { useRef, useState, useMemo } from 'react';
-import { BOMPart, ConfigRule } from '../types';
+import { BOMPart, ConfigRule, RuleLogic } from '../types';
 import { Upload, Table as TableIcon, Trash2, ArrowRight, Search, FileSpreadsheet, Wand2 } from 'lucide-react';
 
 interface Props {
@@ -26,32 +26,87 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
     );
   }, [parts, searchTerm]);
 
-  const generateAutoRules = (newParts: BOMPart[]) => {
-    // Technical dictionary for auto-matching
+  // Utility to parse the complex logic string
+  const parseLogicString = (str: string): RuleLogic => {
+    const orGroups: string[][] = [];
+    const excludes: string[] = [];
+    const includes: string[] = [];
+    let workingStr = str || '';
+
+    // 1. Extract OR groups: (CAB/CAN)
+    const orRegex = /\(([^)]+)\)/g;
+    let orMatch;
+    while ((orMatch = orRegex.exec(str)) !== null) {
+      const group = orMatch[1].split('/').map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
+      if (group.length > 0) orGroups.push(group);
+      workingStr = workingStr.replace(orMatch[0], ' ');
+    }
+
+    // 2. Extract NOT groups: [TT BT]
+    const notRegex = /\[([^\]]+)\]/g;
+    let notMatch;
+    while ((notMatch = notRegex.exec(str)) !== null) {
+      const items = notMatch[1].split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
+      excludes.push(...items);
+      workingStr = workingStr.replace(notMatch[0], ' ');
+    }
+
+    // 3. Extract AND keywords: remaining words separated by space
+    const remaining = workingStr.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
+    includes.push(...remaining);
+
+    return {
+      includes,
+      excludes,
+      orGroups,
+      raw: str
+    };
+  };
+
+  const generateRulesFromData = (data: any[], newParts: BOMPart[]) => {
     const KEYWORDS_DICT = ['CAB', 'ENGINE', 'CANOPY', 'OIL', 'FUEL', 'FLUID', 'HYDRAULIC', 'AIR', 'PRESSURE', 'HEATER', 'LIGHT', 'AC', 'STD'];
     const newRules: ConfigRule[] = [...existingRules];
     let count = 0;
 
-    newParts.forEach(part => {
-      // Logic: Only parts that can be selected (F1/F2) receive auto-rules
+    data.forEach((row, index) => {
+      const part = newParts[index];
+      // Only generate rules for configurable parts (F1/F2)
       if (part.F_Code !== 1 && part.F_Code !== 2) return;
 
-      const metadata = (part.Remarks + ' ' + part.Std_Remarks).toUpperCase();
-      // Logic: Split metadata words to find multi-keyword matches
-      const words = metadata.split(/[\s,._+/]+/).filter(w => w.length > 1);
-      const matchedKeywords = words.filter(word => KEYWORDS_DICT.includes(word));
+      const excelLogic = row.Logic || row.Logic_Config || row.logic;
+      let finalLogic: RuleLogic;
 
-      if (matchedKeywords.length > 0) {
-        const exists = newRules.some(r => r.targetPartId === part.id);
-        if (!exists) {
-          newRules.push({
-            id: `auto-rule-${Date.now()}-${count}`,
-            targetPartId: part.id,
-            keywords: Array.from(new Set(matchedKeywords)), // Unique keywords
-            isActive: true
-          });
-          count++;
+      if (excelLogic && String(excelLogic).trim().length > 0) {
+        // Use provided logic from Excel
+        finalLogic = parseLogicString(String(excelLogic));
+      } else {
+        // Auto-generate keywords from Remarks/Std_Remarks
+        const metadata = (part.Remarks + ' ' + part.Std_Remarks).toUpperCase();
+        const words = metadata.split(/[\s,._+/]+/).filter(w => w.length > 1);
+        const matchedKeywords = Array.from(new Set(words.filter(word => KEYWORDS_DICT.includes(word))));
+
+        if (matchedKeywords.length > 0) {
+          finalLogic = {
+            includes: matchedKeywords,
+            excludes: [],
+            orGroups: [],
+            raw: matchedKeywords.join(' ')
+          };
+        } else {
+          return; // Skip if no keywords found and no logic provided
         }
+      }
+
+      // Add rule if it doesn't already exist for this part
+      const exists = newRules.some(r => r.targetPartId === part.id);
+      if (!exists) {
+        newRules.push({
+          id: `rule-${Date.now()}-${count}`,
+          targetPartId: part.id,
+          logic: finalLogic,
+          isActive: true
+        });
+        count++;
       }
     });
 
@@ -84,7 +139,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
       }));
 
       onPartsUpdate(mappedParts);
-      generateAutoRules(mappedParts);
+      generateRulesFromData(data, mappedParts);
     };
     reader.readAsBinaryString(file);
   };
@@ -97,7 +152,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
             <FileSpreadsheet className="text-indigo-600" />
             BOM Repository Management
           </h2>
-          <p className="text-sm text-slate-500 font-medium">Import Teamcenter data to initialize SKU dependencies.</p>
+          <p className="text-sm text-slate-500 font-medium">Import Teamcenter data with optional 'Logic' column.</p>
         </div>
         <div className="flex gap-2">
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls,.csv" className="hidden" />
@@ -115,7 +170,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
       {autoRuleCount > 0 && (
         <div className="bg-indigo-600 px-6 py-2 flex items-center gap-3 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-inner">
           <Wand2 size={12} className="animate-pulse" />
-          Auto-Discovery: {autoRuleCount} dependency rules extracted from metadata.
+          Rule Processor: {autoRuleCount} dependency rules generated/updated.
         </div>
       )}
 
