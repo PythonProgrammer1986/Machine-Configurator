@@ -26,14 +26,12 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
     );
   }, [parts, searchTerm]);
 
-  // Utility to parse the complex logic string
   const parseLogicString = (str: string): RuleLogic => {
     const orGroups: string[][] = [];
     const excludes: string[] = [];
     const includes: string[] = [];
     let workingStr = str || '';
 
-    // 1. Extract OR groups: (CAB/CAN)
     const orRegex = /\(([^)]+)\)/g;
     let orMatch;
     while ((orMatch = orRegex.exec(str)) !== null) {
@@ -42,7 +40,6 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
       workingStr = workingStr.replace(orMatch[0], ' ');
     }
 
-    // 2. Extract NOT groups: [TT BT]
     const notRegex = /\[([^\]]+)\]/g;
     let notMatch;
     while ((notMatch = notRegex.exec(str)) !== null) {
@@ -51,16 +48,10 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
       workingStr = workingStr.replace(notMatch[0], ' ');
     }
 
-    // 3. Extract AND keywords: remaining words separated by space
     const remaining = workingStr.split(/\s+/).map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
     includes.push(...remaining);
 
-    return {
-      includes,
-      excludes,
-      orGroups,
-      raw: str
-    };
+    return { includes, excludes, orGroups, raw: str };
   };
 
   const generateRulesFromData = (data: any[], newParts: BOMPart[]) => {
@@ -70,17 +61,17 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
 
     data.forEach((row, index) => {
       const part = newParts[index];
-      // Only generate rules for configurable parts (F1/F2)
       if (part.F_Code !== 1 && part.F_Code !== 2) return;
 
+      // PRIORITY 1: Explicit Logic Column
       const excelLogic = row.Logic || row.Logic_Config || row.logic;
-      let finalLogic: RuleLogic;
+      let finalLogic: RuleLogic | null = null;
 
       if (excelLogic && String(excelLogic).trim().length > 0) {
-        // Use provided logic from Excel
         finalLogic = parseLogicString(String(excelLogic));
-      } else {
-        // Auto-generate keywords from Remarks/Std_Remarks
+      } 
+      // PRIORITY 2: Keyword Extraction from Remarks
+      else {
         const metadata = (part.Remarks + ' ' + part.Std_Remarks).toUpperCase();
         const words = metadata.split(/[\s,._+/]+/).filter(w => w.length > 1);
         const matchedKeywords = Array.from(new Set(words.filter(word => KEYWORDS_DICT.includes(word))));
@@ -92,28 +83,28 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
             orGroups: [],
             raw: matchedKeywords.join(' ')
           };
-        } else {
-          return; // Skip if no keywords found and no logic provided
         }
       }
 
-      // Add rule if it doesn't already exist for this part
-      const exists = newRules.some(r => r.targetPartId === part.id);
-      if (!exists) {
-        newRules.push({
-          id: `rule-${Date.now()}-${count}`,
-          targetPartId: part.id,
-          logic: finalLogic,
-          isActive: true
-        });
-        count++;
+      if (finalLogic) {
+        const existingIdx = newRules.findIndex(r => r.targetPartId === part.id);
+        if (existingIdx === -1) {
+          newRules.push({
+            id: `rule-${Date.now()}-${count}`,
+            targetPartId: part.id,
+            logic: finalLogic,
+            isActive: true
+          });
+          count++;
+        } else {
+          // Update existing if it was auto-generated previously or needs refresh
+          newRules[existingIdx].logic = finalLogic;
+        }
       }
     });
 
-    if (count > 0) {
-      onRulesUpdate(newRules);
-      setAutoRuleCount(count);
-    }
+    onRulesUpdate(newRules);
+    setAutoRuleCount(count);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -153,7 +144,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
             <FileSpreadsheet className="text-indigo-600" />
             BOM Repository Management
           </h2>
-          <p className="text-sm text-slate-500 font-medium">Import Teamcenter data with optional 'Logic' and 'Select_pref' columns.</p>
+          <p className="text-sm text-slate-500 font-medium">Excel columns needed: Part_Number, Name, Remarks, F_Code, Ref_des, Logic (Optional).</p>
         </div>
         <div className="flex gap-2">
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls,.csv" className="hidden" />
@@ -178,7 +169,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
       <div className="bg-slate-50 border-b border-slate-200 px-6 py-3 flex items-center justify-between">
         <div className="relative w-full max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-          <input type="text" placeholder="Search Part Number, Name, or Ref Des..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm" />
+          <input type="text" placeholder="Search PN, Name, or Ref Des..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm" />
         </div>
         {parts.length > 0 && (
           <button onClick={onClearAll} className="text-red-600 hover:bg-red-50 px-3 py-2 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors">
