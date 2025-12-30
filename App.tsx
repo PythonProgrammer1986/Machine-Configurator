@@ -5,6 +5,7 @@ import BOMTable from './components/BOMTable';
 import ConfigScreen from './components/ConfigScreen';
 import SelectionScreen from './components/SelectionScreen';
 import BOMGenerated from './components/BOMGenerated';
+import MOProvision from './components/MOProvision';
 import { LayoutDashboard, Settings2, CheckSquare, FileText, Database, FileStack } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -76,11 +77,14 @@ const App: React.FC = () => {
         />;
       case AppScreen.MO_PROVISION:
         return (
-          <div className="p-12 text-center h-full flex flex-col items-center justify-center space-y-4">
-             <FileStack size={64} className="text-slate-300" />
-             <h2 className="text-2xl font-bold text-slate-700">MO BOM Generation</h2>
-             <p className="text-slate-500 max-w-md">Future Provision: This module will allow automatic BOM generation based on Manufacturing Order (MO) copies. Coming soon.</p>
-          </div>
+          <MOProvision 
+            parts={parts} 
+            onAutoSelect={(newIds) => {
+              const updated = new Set([...selectedPartIds, ...Array.from(newIds)]);
+              saveSelections(updated);
+            }} 
+            onNavigateToSelection={() => setActiveScreen(AppScreen.SELECTION)}
+          />
         );
       default:
         return <BOMTable 
@@ -97,8 +101,8 @@ const App: React.FC = () => {
   const navItems = [
     { id: AppScreen.BOM_TABLE, label: 'BOM Table', icon: LayoutDashboard },
     { id: AppScreen.CONFIG, label: 'Logic Config', icon: Settings2 },
+    { id: AppScreen.MO_PROVISION, label: 'MO Intelligence', icon: FileStack },
     { id: AppScreen.SELECTION, label: 'Selection', icon: CheckSquare },
-    { id: AppScreen.MO_PROVISION, label: 'MO Generation', icon: FileStack },
     { id: AppScreen.BOM_GENERATED, label: 'BOM Output', icon: FileText },
   ];
 
@@ -106,7 +110,7 @@ const App: React.FC = () => {
     <div className="min-h-screen flex flex-col">
       <header className="bg-indigo-700 text-white p-4 shadow-lg sticky top-0 z-50">
         <div className="container mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveScreen(AppScreen.BOM_TABLE)}>
             <Database className="w-8 h-8" />
             <h1 className="text-2xl font-bold tracking-tight">BOM Configurator Pro</h1>
           </div>
