@@ -1,12 +1,25 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { BOMPart, ConfigRule, AppScreen, MachineKnowledge, LearningEntry } from './types';
+import { BOMPart, ConfigRule, AppScreen, MachineKnowledge, TechnicalGlossary } from './types';
 import BOMTable from './components/BOMTable';
 import ConfigScreen from './components/ConfigScreen';
 import SelectionScreen from './components/SelectionScreen';
 import BOMGenerated from './components/BOMGenerated';
 import MOProvision from './components/MOProvision';
-import { LayoutDashboard, Settings2, CheckSquare, FileText, Database, FileStack, BrainCircuit } from 'lucide-react';
+import { LayoutDashboard, Settings2, CheckSquare, FileText, Database, FileStack, BrainCircuit, Download, Upload } from 'lucide-react';
+
+const DEFAULT_GLOSSARY: TechnicalGlossary = {
+  'CAB': 'CABIN ASSEMBLY',
+  'HYD': 'HYDRAULIC',
+  'ENG': 'ENGINE',
+  'AC': 'AIR CONDITIONING',
+  'STD': 'STANDARD',
+  'W/': 'WITH',
+  'W/O': 'WITHOUT',
+  'ASSY': 'ASSEMBLY',
+  'OPT': 'OPTIONAL',
+  'CAN': 'CANOPY'
+};
 
 const App: React.FC = () => {
   const [activeScreen, setActiveScreen] = useState<AppScreen>(AppScreen.BOM_TABLE);
@@ -14,22 +27,24 @@ const App: React.FC = () => {
   const [rules, setRules] = useState<ConfigRule[]>([]);
   const [selectedPartIds, setSelectedPartIds] = useState<Set<string>>(new Set());
   const [knowledgeBase, setKnowledgeBase] = useState<MachineKnowledge>({});
+  const [glossary, setGlossary] = useState<TechnicalGlossary>(DEFAULT_GLOSSARY);
   const [currentMOModel, setCurrentMOModel] = useState<string>('Generic');
   
   const saveTimeoutRef = useRef<number | null>(null);
 
-  // Load initial data
   useEffect(() => {
     try {
       const savedParts = localStorage.getItem('bom_parts');
       const savedRules = localStorage.getItem('bom_rules');
       const savedSelections = localStorage.getItem('bom_selections');
       const savedKB = localStorage.getItem('bom_knowledge_base');
+      const savedGlossary = localStorage.getItem('bom_glossary');
       
       if (savedParts) setParts(JSON.parse(savedParts));
       if (savedRules) setRules(JSON.parse(savedRules));
       if (savedSelections) setSelectedPartIds(new Set(JSON.parse(savedSelections)));
       if (savedKB) setKnowledgeBase(JSON.parse(savedKB));
+      if (savedGlossary) setGlossary(JSON.parse(savedGlossary));
     } catch (e) {
       console.error("Storage loading error:", e);
     }
@@ -56,15 +71,11 @@ const App: React.FC = () => {
       mappings.forEach(map => {
         const existing = modelEntries.find(e => e.category === map.category && e.selection === map.selection);
         if (existing) {
-          if (existing.partNumber === map.partNumber) {
-            existing.confirmedCount += 1;
-          } else {
-            // If user corrected to a different part, update it
-            existing.partNumber = map.partNumber;
-            existing.confirmedCount = 1;
-          }
+          existing.partNumber = map.partNumber;
+          existing.confirmedCount += 1;
+          existing.lastUsed = new Date().toISOString();
         } else {
-          modelEntries.push({ ...map, confirmedCount: 1 });
+          modelEntries.push({ ...map, confirmedCount: 1, lastUsed: new Date().toISOString() });
         }
       });
 
@@ -72,8 +83,48 @@ const App: React.FC = () => {
       persist('bom_knowledge_base', newKB);
       return newKB;
     });
-    
-    alert(`Intelligence Base Updated for Model: ${currentMOModel}`);
+  };
+
+  const exportBrain = () => {
+    const exportData = {
+      knowledgeBase,
+      glossary,
+      timestamp: new Date().toISOString(),
+      version: "2.0"
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `BOM_Intelligence_Base_${new Date().toISOString().slice(0,10)}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const importBrain = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const imported = JSON.parse(evt.target?.result as string);
+        
+        // Handle legacy imports (only knowledge base) or v2.0 imports
+        const newKB = imported.knowledgeBase || imported;
+        const newGlossary = imported.glossary || glossary;
+
+        setKnowledgeBase(prev => ({ ...prev, ...newKB }));
+        setGlossary(newGlossary);
+        
+        persist('bom_knowledge_base', { ...knowledgeBase, ...newKB });
+        persist('bom_glossary', newGlossary);
+        
+        alert("Intelligence Base and Dictionary Updated Successfully");
+      } catch (e) {
+        alert("Invalid Intelligence File");
+      }
+    };
+    reader.readAsText(file);
   };
 
   const renderScreen = () => {
@@ -81,12 +132,21 @@ const App: React.FC = () => {
       case AppScreen.BOM_TABLE:
         return <BOMTable parts={parts} onPartsUpdate={p => { setParts(p); persist('bom_parts', p); }} onRulesUpdate={r => { setRules(r); persist('bom_rules', r); }} existingRules={rules} onNavigate={() => setActiveScreen(AppScreen.CONFIG)} onClearAll={() => { localStorage.clear(); window.location.reload(); }} />;
       case AppScreen.CONFIG:
-        return <ConfigScreen rules={rules} onRulesUpdate={r => { setRules(r); persist('bom_rules', r); }} parts={parts} />;
+        return (
+          <ConfigScreen 
+            rules={rules} 
+            onRulesUpdate={r => { setRules(r); persist('bom_rules', r); }} 
+            parts={parts} 
+            glossary={glossary}
+            onGlossaryUpdate={g => { setGlossary(g); persist('bom_glossary', g); }}
+          />
+        );
       case AppScreen.MO_PROVISION:
         return (
           <MOProvision 
             parts={parts} 
             knowledgeBase={knowledgeBase}
+            glossary={glossary}
             onModelDetected={setCurrentMOModel}
             onAutoSelect={(newIds) => {
               const updated = new Set([...selectedPartIds, ...Array.from(newIds)]);
@@ -99,14 +159,7 @@ const App: React.FC = () => {
       case AppScreen.SELECTION:
         return <SelectionScreen parts={parts} rules={rules} selectedIds={selectedPartIds} onSelectionChange={ids => { setSelectedPartIds(ids); persist('bom_selections', Array.from(ids)); }} onGenerate={() => setActiveScreen(AppScreen.BOM_GENERATED)} />;
       case AppScreen.BOM_GENERATED:
-        return (
-          <BOMGenerated 
-            parts={parts} 
-            selectedIds={selectedPartIds} 
-            modelName={currentMOModel}
-            onFinalizeKnowledge={onFinalizeAndLearn}
-          />
-        );
+        return <BOMGenerated parts={parts} selectedIds={selectedPartIds} modelName={currentMOModel} onFinalizeKnowledge={onFinalizeAndLearn} />;
       default:
         return null;
     }
@@ -140,7 +193,13 @@ const App: React.FC = () => {
       </main>
       <footer className="bg-white border-t p-6">
         <div className="container mx-auto flex justify-between items-center px-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Memory Engine: {Object.keys(knowledgeBase).length} Models Learned</p>
+          <div className="flex items-center gap-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Offline Intelligence: {Object.keys(knowledgeBase).length} Models | {Object.keys(glossary).length} Synonyms</p>
+            <div className="flex gap-2">
+              <button onClick={exportBrain} className="text-[10px] font-black uppercase bg-slate-50 hover:bg-slate-100 text-slate-500 px-3 py-1 rounded-md border flex items-center gap-1 transition-all"><Download size={10} /> Export Brain</button>
+              <label className="text-[10px] font-black uppercase bg-slate-50 hover:bg-slate-100 text-slate-500 px-3 py-1 rounded-md border flex items-center gap-1 transition-all cursor-pointer"><Upload size={10} /> Import Brain<input type="file" className="hidden" onChange={importBrain} /></label>
+            </div>
+          </div>
           <BrainCircuit className="text-indigo-300 animate-pulse" size={20} />
         </div>
       </footer>
