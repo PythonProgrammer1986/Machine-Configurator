@@ -51,6 +51,22 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
     return { includes, excludes, orGroups, raw: str };
   };
 
+  const renderHighlightedLogic = (raw: string) => {
+    // A simple regex to split into parts: (...), [...], or plain text
+    const parts_arr = raw.split(/(\([^)]+\)|\[[^\]]+\])/g);
+    return (
+      <div className="flex flex-wrap gap-1.5 font-mono text-xs font-bold items-center">
+        {parts_arr.map((p, i) => {
+          if (p.startsWith('(')) return <span key={i} className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200 shadow-sm">{p}</span>;
+          if (p.startsWith('[')) return <span key={i} className="bg-red-100 text-red-700 px-2 py-0.5 rounded-md border border-red-200 shadow-sm">{p}</span>;
+          return p.split(/\s+/).map((word, j) => 
+            word.length > 0 ? <span key={`${i}-${j}`} className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-md border border-emerald-200 shadow-sm">{word}</span> : null
+          );
+        })}
+      </div>
+    );
+  };
+
   const addSynonym = () => {
     if (!newSynonym.abbr || !newSynonym.full) return;
     const updated = { ...glossary, [newSynonym.abbr.toUpperCase()]: newSynonym.full.toUpperCase() };
@@ -215,7 +231,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
                             <span className="text-xs font-bold text-slate-800">{part?.Name}</span>
                          </div>
                          <div className="flex-[2] px-4">
-                           <div className="bg-slate-50 px-4 py-2 rounded-xl border font-mono text-xs font-bold text-indigo-700 w-fit">{rule.logic.raw}</div>
+                           {renderHighlightedLogic(rule.logic.raw)}
                          </div>
                          <div className="flex gap-4">
                            <button onClick={() => handleEditClick(rule)} className="text-slate-400 hover:text-indigo-600 transition-colors flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest">

@@ -222,7 +222,7 @@ const App: React.FC = () => {
         </div>
       </main>
       <footer className="bg-white border-t p-6">
-        <div className="container mx-auto flex justify-between items-center px-4">
+        <div className="container mx-auto flex flex-col md:flex-row justify-between items-center px-4 gap-4">
           <div className="flex items-center gap-4">
             <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Offline Intelligence: {Object.keys(knowledgeBase).length} Models | {Object.keys(glossary).length} Synonyms</p>
             <div className="flex gap-2">
@@ -230,17 +230,22 @@ const App: React.FC = () => {
               <label className="text-[10px] font-black uppercase bg-slate-50 hover:bg-slate-100 text-slate-500 px-3 py-1 rounded-md border flex items-center gap-1 transition-all cursor-pointer"><Upload size={10} /> Import Brain<input type="file" className="hidden" onChange={importBrain} /></label>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {effectiveApiKey ? (
-              <div className="flex items-center gap-2 text-emerald-500 text-[9px] font-black uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
-                <ShieldAlert size={10} /> Neural Link Active
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-amber-500 text-[9px] font-black uppercase tracking-widest bg-amber-50 px-3 py-1 rounded-full border border-amber-100">
-                <ShieldAlert size={10} /> Neural Link Pending
-              </div>
-            )}
-            <BrainCircuit className="text-indigo-300 animate-pulse" size={20} />
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <p className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em]">Created By: Aditya Shitut</p>
+            </div>
+            <div className="flex items-center gap-3">
+              {effectiveApiKey ? (
+                <div className="flex items-center gap-2 text-emerald-500 text-[9px] font-black uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+                  <ShieldAlert size={10} /> Neural Link Active
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-amber-500 text-[9px] font-black uppercase tracking-widest bg-amber-50 px-3 py-1 rounded-full border border-amber-100">
+                  <ShieldAlert size={10} /> Neural Link Pending
+                </div>
+              )}
+              <BrainCircuit className="text-indigo-300 animate-pulse" size={20} />
+            </div>
           </div>
         </div>
       </footer>
