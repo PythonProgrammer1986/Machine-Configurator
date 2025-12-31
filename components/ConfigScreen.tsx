@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
-import { ConfigRule, BOMPart, RuleLogic, TechnicalGlossary } from '../types';
-import { Settings, Plus, X, Edit3, Save, Search, Wand2, Book, Trash2, ShieldCheck, Key, Info } from 'lucide-react';
+import { ConfigRule, BOMPart, RuleLogic, TechnicalGlossary, MachineKnowledge, LearningEntry } from '../types';
+import { Settings, Plus, X, Edit3, Save, Search, Wand2, Book, Trash2, ShieldCheck, Key, Info, FileSpreadsheet, Download, Upload } from 'lucide-react';
 
 interface Props {
   rules: ConfigRule[];
@@ -11,15 +11,18 @@ interface Props {
   onGlossaryUpdate: (glossary: TechnicalGlossary) => void;
   apiKey: string;
   onApiKeyUpdate: (key: string) => void;
+  knowledgeBase: MachineKnowledge;
+  onKnowledgeBaseUpdate: (kb: MachineKnowledge) => void;
 }
 
-const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, onGlossaryUpdate, apiKey, onApiKeyUpdate }) => {
+const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, onGlossaryUpdate, apiKey, onApiKeyUpdate, knowledgeBase, onKnowledgeBaseUpdate }) => {
   const [activeTab, setActiveTab] = useState<'logic' | 'glossary' | 'system'>('logic');
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [newRule, setNewRule] = useState({ targetPartId: '', keywordString: '' });
   const [newSynonym, setNewSynonym] = useState({ abbr: '', full: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [tempKey, setTempKey] = useState(apiKey);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   const selectableParts = parts.filter(p => p.F_Code === 1 || p.F_Code === 2);
 
@@ -51,8 +54,119 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
     return { includes, excludes, orGroups, raw: str };
   };
 
+  const handleExportIntel = () => {
+    if (rules.length === 0 && Object.keys(knowledgeBase).length === 0) {
+      alert("No data available to export.");
+      return;
+    }
+
+    const logicData = rules.map(r => {
+      const part = parts.find(p => p.id === r.targetPartId);
+      return {
+        Part_Number: part?.Part_Number || 'Unknown',
+        Part_Name: part?.Name || '',
+        Logic_Expression: r.logic.raw,
+        Is_Active: r.isActive ? 'YES' : 'NO'
+      };
+    });
+
+    // Fix for Error in file components/ConfigScreen.tsx on line 74: Property 'map' does not exist on type 'unknown'.
+    // Explicitly casting Object.entries to ensure entries is recognized as LearningEntry[]
+    const intelData = (Object.entries(knowledgeBase) as [string, LearningEntry[]][]).flatMap(([model, entries]) => 
+      entries.map(e => ({
+        Machine_Model: model,
+        Part_Number: e.partNumber,
+        Category: e.category,
+        Selection_Text: e.selection,
+        Hits: e.confirmedCount,
+        Last_Used: e.lastUsed
+      }))
+    );
+
+    const wb = (window as any).XLSX.book_new();
+    const wsLogic = (window as any).XLSX.utils.json_to_sheet(logicData);
+    const wsIntel = (window as any).XLSX.utils.json_to_sheet(intelData);
+
+    (window as any).XLSX.utils.book_append_sheet(wb, wsLogic, "Engineering Logic");
+    (window as any).XLSX.utils.book_append_sheet(wb, wsIntel, "Neural Insights");
+
+    (window as any).XLSX.writeFile(wb, `BOM_Intelligence_Export_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
+
+  const handleImportIntel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = (window as any).XLSX.read(bstr, { type: 'binary' });
+        
+        // 1. Process Engineering Logic
+        if (wb.SheetNames.includes("Engineering Logic")) {
+          const logicRows = (window as any).XLSX.utils.sheet_to_json(wb.Sheets["Engineering Logic"]);
+          const newRules: ConfigRule[] = [...rules];
+          
+          logicRows.forEach((row: any) => {
+            const part = parts.find(p => p.Part_Number === String(row.Part_Number));
+            if (!part) return;
+
+            const logic = parseLogicString(String(row.Logic_Expression || ''));
+            const existingIdx = newRules.findIndex(r => r.targetPartId === part.id);
+            
+            if (existingIdx !== -1) {
+              newRules[existingIdx].logic = logic;
+            } else {
+              newRules.push({
+                id: `rule-${Date.now()}-${Math.random()}`,
+                targetPartId: part.id,
+                logic: logic,
+                isActive: String(row.Is_Active).toUpperCase() === 'YES'
+              });
+            }
+          });
+          onRulesUpdate(newRules);
+        }
+
+        // 2. Process Neural Insights
+        if (wb.SheetNames.includes("Neural Insights")) {
+          const intelRows = (window as any).XLSX.utils.sheet_to_json(wb.Sheets["Neural Insights"]);
+          const newKB: MachineKnowledge = { ...knowledgeBase };
+
+          intelRows.forEach((row: any) => {
+            const model = String(row.Machine_Model || 'Generic');
+            if (!newKB[model]) newKB[model] = [];
+            
+            const entry: LearningEntry = {
+              partNumber: String(row.Part_Number),
+              category: String(row.Category),
+              selection: String(row.Selection_Text),
+              confirmedCount: parseInt(row.Hits) || 1,
+              lastUsed: row.Last_Used || new Date().toISOString()
+            };
+
+            const existingIdx = newKB[model].findIndex(e => e.category === entry.category && e.selection === entry.selection && e.partNumber === entry.partNumber);
+            if (existingIdx !== -1) {
+              newKB[model][existingIdx] = entry;
+            } else {
+              newKB[model].push(entry);
+            }
+          });
+          onKnowledgeBaseUpdate(newKB);
+        }
+
+        alert("Intelligence Repository Synchronized Successfully");
+      } catch (err) {
+        console.error(err);
+        alert("Sync Error: The Excel format does not match the required intelligence schema.");
+      }
+    };
+    reader.readAsBinaryString(file);
+    if (importFileRef.current) importFileRef.current.value = '';
+  };
+
   const renderHighlightedLogic = (raw: string) => {
-    // A simple regex to split into parts: (...), [...], or plain text
     const parts_arr = raw.split(/(\([^)]+\)|\[[^\]]+\])/g);
     return (
       <div className="flex flex-wrap gap-1.5 font-mono text-xs font-bold items-center">
@@ -159,9 +273,18 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
         </div>
         <div className="flex gap-2">
           {activeTab === 'logic' && (
-            <button onClick={() => {}} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-black border border-emerald-200 transition-all shadow-sm">
-              <Wand2 size={14} /> Smart Auto-Generate
-            </button>
+            <>
+              <input type="file" ref={importFileRef} onChange={handleImportIntel} accept=".xlsx,.xls" className="hidden" />
+              <button onClick={() => importFileRef.current?.click()} className="bg-slate-50 hover:bg-slate-100 text-slate-600 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-black border border-slate-200 transition-all shadow-sm">
+                <Upload size={14} /> Import Intel (Excel)
+              </button>
+              <button onClick={handleExportIntel} className="bg-slate-50 hover:bg-slate-100 text-slate-600 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-black border border-slate-200 transition-all shadow-sm">
+                <Download size={14} /> Export Intel (Excel)
+              </button>
+              <button onClick={() => {}} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-black border border-emerald-200 transition-all shadow-sm">
+                <Wand2 size={14} /> Smart Auto-Generate
+              </button>
+            </>
           )}
         </div>
       </div>

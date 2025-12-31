@@ -6,7 +6,8 @@ import ConfigScreen from './components/ConfigScreen';
 import SelectionScreen from './components/SelectionScreen';
 import BOMGenerated from './components/BOMGenerated';
 import MOProvision from './components/MOProvision';
-import { LayoutDashboard, Settings2, CheckSquare, FileText, Database, FileStack, BrainCircuit, Download, Upload, ShieldAlert, Key } from 'lucide-react';
+import NeuralAcademy from './components/NeuralAcademy';
+import { LayoutDashboard, Settings2, CheckSquare, FileText, Database, FileStack, BrainCircuit, Download, Upload, ShieldAlert, Key, GraduationCap } from 'lucide-react';
 
 const DEFAULT_GLOSSARY: TechnicalGlossary = {
   'CAB': 'CABIN ASSEMBLY',
@@ -67,6 +68,11 @@ const App: React.FC = () => {
     localStorage.setItem('user_api_key', newKey);
   };
 
+  const handleUpdateKnowledgeBase = (newKB: MachineKnowledge) => {
+    setKnowledgeBase(newKB);
+    persist('bom_knowledge_base', newKB);
+  };
+
   const onFinalizeAndLearn = (mappings: {category: string, selection: string, partNumber: string}[]) => {
     if (!currentMOModel || currentMOModel === 'Generic') return;
 
@@ -114,18 +120,21 @@ const App: React.FC = () => {
     reader.onload = (evt) => {
       try {
         const imported = JSON.parse(evt.target?.result as string);
-        const newKB = imported.knowledgeBase || imported;
+        
+        // Handle both full brain exports and individual model weights
+        const newKB = imported.knowledgeBase || (imported.modelName ? imported.knowledgeBase : imported);
         const newGlossary = imported.glossary || glossary;
 
-        setKnowledgeBase(prev => ({ ...prev, ...newKB }));
+        const updatedKB = { ...knowledgeBase, ...newKB };
+        setKnowledgeBase(updatedKB);
         setGlossary(newGlossary);
         
-        persist('bom_knowledge_base', { ...knowledgeBase, ...newKB });
+        persist('bom_knowledge_base', updatedKB);
         persist('bom_glossary', newGlossary);
         
-        alert("Intelligence Base and Dictionary Updated Successfully");
+        alert(`Successfully imported ${imported.modelName ? `weights for [${imported.modelName}]` : 'entire brain network'}.`);
       } catch (e) {
-        alert("Invalid Intelligence File");
+        alert("Invalid Intelligence File Schema.");
       }
     };
     reader.readAsText(file);
@@ -134,7 +143,17 @@ const App: React.FC = () => {
   const renderScreen = () => {
     switch (activeScreen) {
       case AppScreen.BOM_TABLE:
-        return <BOMTable parts={parts} onPartsUpdate={p => { setParts(p); persist('bom_parts', p); }} onRulesUpdate={r => { setRules(r); persist('bom_rules', r); }} existingRules={rules} onNavigate={() => setActiveScreen(AppScreen.CONFIG)} onClearAll={() => { localStorage.clear(); window.location.reload(); }} />;
+        return (
+          <BOMTable 
+            parts={parts} 
+            onPartsUpdate={p => { setParts(p); persist('bom_parts', p); }} 
+            onRulesUpdate={r => { setRules(r); persist('bom_rules', r); }} 
+            existingRules={rules} 
+            knowledgeBase={knowledgeBase}
+            onNavigate={() => setActiveScreen(AppScreen.CONFIG)} 
+            onClearAll={() => { localStorage.clear(); window.location.reload(); }} 
+          />
+        );
       case AppScreen.CONFIG:
         return (
           <ConfigScreen 
@@ -145,6 +164,8 @@ const App: React.FC = () => {
             onGlossaryUpdate={g => { setGlossary(g); persist('bom_glossary', g); }}
             apiKey={apiKey}
             onApiKeyUpdate={handleUpdateApiKey}
+            knowledgeBase={knowledgeBase}
+            onKnowledgeBaseUpdate={handleUpdateKnowledgeBase}
           />
         );
       case AppScreen.MO_PROVISION:
@@ -161,6 +182,18 @@ const App: React.FC = () => {
               persist('bom_selections', Array.from(updated));
             }} 
             onNavigateToSelection={() => setActiveScreen(AppScreen.SELECTION)}
+          />
+        );
+      case AppScreen.NEURAL_ACADEMY:
+        return (
+          <NeuralAcademy 
+            knowledgeBase={knowledgeBase}
+            onKnowledgeBaseUpdate={handleUpdateKnowledgeBase}
+            apiKey={apiKey}
+            parts={parts}
+            rules={rules}
+            onRulesUpdate={r => { setRules(r); persist('bom_rules', r); }}
+            glossary={glossary}
           />
         );
       case AppScreen.SELECTION:
@@ -186,6 +219,7 @@ const App: React.FC = () => {
             {[
               { id: AppScreen.BOM_TABLE, label: 'Table', icon: LayoutDashboard },
               { id: AppScreen.CONFIG, label: 'Logic', icon: Settings2 },
+              { id: AppScreen.NEURAL_ACADEMY, label: 'Academy', icon: GraduationCap },
               { id: AppScreen.MO_PROVISION, label: 'MO Intel', icon: FileStack },
               { id: AppScreen.SELECTION, label: 'Configure', icon: CheckSquare },
               { id: AppScreen.BOM_GENERATED, label: 'Output', icon: FileText },
@@ -199,7 +233,7 @@ const App: React.FC = () => {
       </header>
       <main className="flex-1 container mx-auto p-4 md:p-8">
         <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-200 min-h-[650px] overflow-hidden relative">
-          {(!effectiveApiKey && activeScreen === AppScreen.MO_PROVISION) && (
+          {(!effectiveApiKey && (activeScreen === AppScreen.MO_PROVISION || activeScreen === AppScreen.NEURAL_ACADEMY)) && (
             <div className="absolute inset-0 z-[60] bg-white/80 backdrop-blur-md flex items-center justify-center p-8">
               <div className="bg-white border-2 border-amber-200 p-12 rounded-[3rem] shadow-2xl max-w-md w-full text-center space-y-6">
                 <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-500">

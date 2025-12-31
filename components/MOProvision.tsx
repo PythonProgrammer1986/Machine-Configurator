@@ -54,7 +54,9 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
   const partIndex = useMemo(() => {
     return parts.map(p => {
       let technicalSource = `${p.Name} ${p.Remarks} ${p.Std_Remarks} ${p.Ref_des}`.toUpperCase();
-      Object.entries(glossary).forEach(([abbr, full]) => {
+      // Fix for Error in file components/MOProvision.tsx on line 139: Property 'split' does not exist on type 'unknown'.
+      // Explicitly typing Object.entries for the glossary to ensure 'full' is recognized as a string.
+      (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
         if (technicalSource.includes(abbr)) technicalSource += ` ${full}`;
       });
       return {
@@ -90,7 +92,8 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
           r.onload = () => {
             const result = r.result;
             if (typeof result === 'string') {
-              res((result as string).split(',')[1] || '');
+              // Extract the base64 part safely.
+              res(result.split(',')[1] || '');
             } else {
               res('');
             }
@@ -135,7 +138,9 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
       allOptions.forEach(opt => {
         const queryRaw = `${opt.category} ${opt.selection}`.toUpperCase();
         let queryTokens = queryRaw.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s));
-        Object.entries(glossary).forEach(([abbr, full]) => {
+        // Fix for Error in file components/MOProvision.tsx on line 139: Property 'split' does not exist on type 'unknown'.
+        // Explicitly casting Object.entries(glossary) to ensure 'full' is treated as a string before calling .split()
+        (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
           if (queryRaw.includes(abbr)) queryTokens.push(...full.split(' '));
         });
         const queryTokenSet = new Set(queryTokens);

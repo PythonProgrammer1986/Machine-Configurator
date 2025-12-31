@@ -1,21 +1,24 @@
 
 import React, { useRef, useState, useMemo } from 'react';
-import { BOMPart, ConfigRule, RuleLogic } from '../types';
-import { Upload, Table as TableIcon, Trash2, ArrowRight, Search, FileSpreadsheet, Wand2 } from 'lucide-react';
+import { BOMPart, ConfigRule, RuleLogic, MachineKnowledge } from '../types';
+import { Upload, Table as TableIcon, Trash2, ArrowRight, Search, FileSpreadsheet, Wand2, Info } from 'lucide-react';
+import PartDetailModal from './PartDetailModal';
 
 interface Props {
   parts: BOMPart[];
   existingRules: ConfigRule[];
+  knowledgeBase: MachineKnowledge;
   onPartsUpdate: (parts: BOMPart[]) => void;
   onRulesUpdate: (rules: ConfigRule[]) => void;
   onNavigate: () => void;
   onClearAll: () => void;
 }
 
-const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRulesUpdate, onNavigate, onClearAll }) => {
+const BOMTable: React.FC<Props> = ({ parts, existingRules, knowledgeBase, onPartsUpdate, onRulesUpdate, onNavigate, onClearAll }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [autoRuleCount, setAutoRuleCount] = useState(0);
+  const [selectedPart, setSelectedPart] = useState<BOMPart | null>(null);
 
   const filteredParts = useMemo(() => {
     return parts.filter(p => 
@@ -63,14 +66,12 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
       const part = newParts[index];
       if (part.F_Code !== 1 && part.F_Code !== 2) return;
 
-      // PRIORITY 1: Explicit Logic Column
       const excelLogic = row.Logic || row.Logic_Config || row.logic;
       let finalLogic: RuleLogic | null = null;
 
       if (excelLogic && String(excelLogic).trim().length > 0) {
         finalLogic = parseLogicString(String(excelLogic));
       } 
-      // PRIORITY 2: Keyword Extraction from Remarks
       else {
         const metadata = (part.Remarks + ' ' + part.Std_Remarks).toUpperCase();
         const words = metadata.split(/[\s,._+/]+/).filter(w => w.length > 1);
@@ -97,7 +98,6 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
           });
           count++;
         } else {
-          // Update existing if it was auto-generated previously or needs refresh
           newRules[existingIdx].logic = finalLogic;
         }
       }
@@ -136,8 +136,13 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
     reader.readAsBinaryString(file);
   };
 
+  const handlePartUpdate = (updatedPart: BOMPart) => {
+    const nextParts = parts.map(p => p.id === updatedPart.id ? updatedPart : p);
+    onPartsUpdate(nextParts);
+  };
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       <div className="p-6 border-b border-slate-200 flex flex-wrap justify-between items-center bg-white gap-4">
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800">
@@ -171,11 +176,14 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
           <input type="text" placeholder="Search PN, Name, or Ref Des..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm" />
         </div>
-        {parts.length > 0 && (
-          <button onClick={onClearAll} className="text-red-600 hover:bg-red-50 px-3 py-2 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors">
-            <Trash2 size={14} /> Clear Database
-          </button>
-        )}
+        <div className="flex items-center gap-4">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest hidden lg:inline">Tip: Click a row to explore technical intelligence</span>
+          {parts.length > 0 && (
+            <button onClick={onClearAll} className="text-red-600 hover:bg-red-50 px-3 py-2 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors">
+              <Trash2 size={14} /> Clear Database
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto">
@@ -197,8 +205,15 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
               {filteredParts.map((part) => (
-                <tr key={part.id} className="hover:bg-slate-50 transition-colors group">
-                  <td className="px-6 py-4 text-sm text-indigo-700 font-mono font-bold">{part.Part_Number}</td>
+                <tr 
+                  key={part.id} 
+                  className="hover:bg-indigo-50/30 transition-colors group cursor-pointer"
+                  onClick={() => setSelectedPart(part)}
+                >
+                  <td className="px-6 py-4 text-sm text-indigo-700 font-mono font-bold flex items-center gap-2">
+                    {part.Part_Number}
+                    <Info size={12} className="opacity-0 group-hover:opacity-40 transition-opacity" />
+                  </td>
                   <td className="px-6 py-4 text-sm text-slate-900 font-bold">{part.Name}</td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col gap-0.5">
@@ -221,6 +236,16 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, onPartsUpdate, onRule
           </table>
         )}
       </div>
+
+      {selectedPart && (
+        <PartDetailModal 
+          part={selectedPart}
+          rules={existingRules.filter(r => r.targetPartId === selectedPart.id)}
+          knowledgeBase={knowledgeBase}
+          onClose={() => setSelectedPart(null)}
+          onUpdate={handlePartUpdate}
+        />
+      )}
     </div>
   );
 };
