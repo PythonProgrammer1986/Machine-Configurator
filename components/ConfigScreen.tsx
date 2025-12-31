@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { ConfigRule, BOMPart, RuleLogic, TechnicalGlossary } from '../types';
-import { Settings, Plus, X, Edit3, Save, Search, Wand2, Book, Trash2 } from 'lucide-react';
+import { Settings, Plus, X, Edit3, Save, Search, Wand2, Book, Trash2, ShieldCheck, Key, Info } from 'lucide-react';
 
 interface Props {
   rules: ConfigRule[];
@@ -9,14 +9,17 @@ interface Props {
   parts: BOMPart[];
   glossary: TechnicalGlossary;
   onGlossaryUpdate: (glossary: TechnicalGlossary) => void;
+  apiKey: string;
+  onApiKeyUpdate: (key: string) => void;
 }
 
-const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, onGlossaryUpdate }) => {
-  const [activeTab, setActiveTab] = useState<'logic' | 'glossary'>('logic');
+const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, onGlossaryUpdate, apiKey, onApiKeyUpdate }) => {
+  const [activeTab, setActiveTab] = useState<'logic' | 'glossary' | 'system'>('logic');
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [newRule, setNewRule] = useState({ targetPartId: '', keywordString: '' });
   const [newSynonym, setNewSynonym] = useState({ abbr: '', full: '' });
   const [searchTerm, setSearchTerm] = useState('');
+  const [tempKey, setTempKey] = useState(apiKey);
 
   const selectableParts = parts.filter(p => p.F_Code === 1 || p.F_Code === 2);
 
@@ -68,7 +71,6 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
     }
 
     if (editingRuleId) {
-      // Update existing rule
       const updatedRules = rules.map(rule => {
         if (rule.id === editingRuleId) {
           return {
@@ -82,7 +84,6 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
       onRulesUpdate(updatedRules);
       setEditingRuleId(null);
     } else {
-      // Add new rule
       const rule: ConfigRule = {
         id: `rule-${Date.now()}`,
         targetPartId: newRule.targetPartId,
@@ -100,13 +101,17 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
       targetPartId: rule.targetPartId,
       keywordString: rule.logic.raw
     });
-    // Scroll to form
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const cancelEdit = () => {
     setEditingRuleId(null);
     setNewRule({ targetPartId: '', keywordString: '' });
+  };
+
+  const handleSaveApiKey = () => {
+    onApiKeyUpdate(tempKey);
+    alert("System Configuration Updated Permanently.");
   };
 
   const filteredRules = rules.filter(r => {
@@ -132,6 +137,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
             <div className="flex gap-4 mt-2">
                <button onClick={() => setActiveTab('logic')} className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${activeTab === 'logic' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>Engineering Logic</button>
                <button onClick={() => setActiveTab('glossary')} className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${activeTab === 'glossary' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>Semantic Dictionary</button>
+               <button onClick={() => setActiveTab('system')} className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${activeTab === 'system' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>System Config</button>
             </div>
           </div>
         </div>
@@ -145,7 +151,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
       </div>
 
       <div className="p-6 overflow-auto">
-        {activeTab === 'logic' ? (
+        {activeTab === 'logic' && (
           <div className="space-y-6">
             <div className={`bg-white border rounded-3xl p-8 shadow-sm transition-all ${editingRuleId ? 'border-amber-400 ring-4 ring-amber-500/5' : 'border-slate-200'}`}>
               <div className="flex justify-between items-center mb-6">
@@ -212,16 +218,10 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
                            <div className="bg-slate-50 px-4 py-2 rounded-xl border font-mono text-xs font-bold text-indigo-700 w-fit">{rule.logic.raw}</div>
                          </div>
                          <div className="flex gap-4">
-                           <button 
-                             onClick={() => handleEditClick(rule)} 
-                             className="text-slate-400 hover:text-indigo-600 transition-colors flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest"
-                           >
+                           <button onClick={() => handleEditClick(rule)} className="text-slate-400 hover:text-indigo-600 transition-colors flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest">
                              <Edit3 size={16} /> Edit
                            </button>
-                           <button 
-                             onClick={() => onRulesUpdate(rules.filter(r => r.id !== rule.id))} 
-                             className="text-slate-300 hover:text-red-500 transition-colors"
-                           >
+                           <button onClick={() => onRulesUpdate(rules.filter(r => r.id !== rule.id))} className="text-slate-300 hover:text-red-500 transition-colors">
                              <Trash2 size={18} />
                            </button>
                          </div>
@@ -231,30 +231,20 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
                </div>
             </div>
           </div>
-        ) : (
+        )}
+
+        {activeTab === 'glossary' && (
           <div className="space-y-6">
             <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
               <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">Add Semantic Synonym</h3>
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
                 <div className="md:col-span-3 space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Abbreviation / Key</label>
-                  <input 
-                    type="text"
-                    placeholder="e.g. CAB"
-                    value={newSynonym.abbr}
-                    onChange={(e) => setNewSynonym({...newSynonym, abbr: e.target.value})}
-                    className="w-full border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500/50 bg-slate-50/50"
-                  />
+                  <input type="text" placeholder="e.g. CAB" value={newSynonym.abbr} onChange={(e) => setNewSynonym({...newSynonym, abbr: e.target.value})} className="w-full border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500/50 bg-slate-50/50" />
                 </div>
                 <div className="md:col-span-7 space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Full Technical nomenclature</label>
-                  <input 
-                    type="text"
-                    placeholder="e.g. CABIN ASSEMBLY"
-                    value={newSynonym.full}
-                    onChange={(e) => setNewSynonym({...newSynonym, full: e.target.value})}
-                    className="w-full border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500/5 bg-slate-50/50"
-                  />
+                  <input type="text" placeholder="e.g. CABIN ASSEMBLY" value={newSynonym.full} onChange={(e) => setNewSynonym({...newSynonym, full: e.target.value})} className="w-full border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500/5 bg-slate-50/50" />
                 </div>
                 <div className="md:col-span-2">
                   <button onClick={addSynonym} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 px-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-xl text-xs uppercase tracking-widest">
@@ -263,7 +253,6 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
                 </div>
               </div>
             </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {Object.entries(glossary).map(([abbr, full]) => (
                 <div key={abbr} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex justify-between items-center group hover:border-indigo-200 transition-all">
@@ -274,6 +263,53 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
                   <button onClick={() => removeSynonym(abbr)} className="text-slate-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><X size={16} /></button>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'system' && (
+          <div className="max-w-2xl mx-auto space-y-8 py-10">
+            <div className="bg-white border border-slate-200 rounded-[3rem] p-10 shadow-sm relative overflow-hidden">
+               <div className="absolute top-0 right-0 p-8 text-indigo-100">
+                  <ShieldCheck size={120} />
+               </div>
+               <div className="relative z-10 space-y-8">
+                  <div className="space-y-2">
+                    <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-3">
+                      <Key className="text-indigo-600" /> Intelligence Link
+                    </h3>
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Connect to Gemini 3 for Advanced Neural Processing</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1">Gemini API Key (Persistent)</label>
+                      <input 
+                        type="password" 
+                        placeholder="Paste your API key here..." 
+                        value={tempKey} 
+                        onChange={(e) => setTempKey(e.target.value)}
+                        className="w-full border-2 border-slate-100 rounded-2xl p-5 text-sm font-mono outline-none focus:border-indigo-500 focus:bg-white transition-all bg-slate-50 shadow-inner"
+                      />
+                    </div>
+                    
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex gap-4">
+                      <div className="p-2 bg-white rounded-lg border text-indigo-600 h-fit">
+                        <Info size={16} />
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-bold leading-relaxed uppercase">
+                        This key is stored locally in your browser's persistent storage. It is never transmitted to our servers—it is used directly to call the Gemini API from your device.
+                      </p>
+                    </div>
+
+                    <button 
+                      onClick={handleSaveApiKey}
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-xl text-xs uppercase tracking-widest"
+                    >
+                      <Save size={18} /> Update Secure Connection
+                    </button>
+                  </div>
+               </div>
             </div>
           </div>
         )}

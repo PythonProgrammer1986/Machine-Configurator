@@ -6,7 +6,7 @@ import ConfigScreen from './components/ConfigScreen';
 import SelectionScreen from './components/SelectionScreen';
 import BOMGenerated from './components/BOMGenerated';
 import MOProvision from './components/MOProvision';
-import { LayoutDashboard, Settings2, CheckSquare, FileText, Database, FileStack, BrainCircuit, Download, Upload } from 'lucide-react';
+import { LayoutDashboard, Settings2, CheckSquare, FileText, Database, FileStack, BrainCircuit, Download, Upload, ShieldAlert, Key } from 'lucide-react';
 
 const DEFAULT_GLOSSARY: TechnicalGlossary = {
   'CAB': 'CABIN ASSEMBLY',
@@ -29,6 +29,7 @@ const App: React.FC = () => {
   const [knowledgeBase, setKnowledgeBase] = useState<MachineKnowledge>({});
   const [glossary, setGlossary] = useState<TechnicalGlossary>(DEFAULT_GLOSSARY);
   const [currentMOModel, setCurrentMOModel] = useState<string>('Generic');
+  const [apiKey, setApiKey] = useState<string>(localStorage.getItem('user_api_key') || '');
   
   const saveTimeoutRef = useRef<number | null>(null);
 
@@ -60,6 +61,11 @@ const App: React.FC = () => {
       }
     }, 800);
   }, []);
+
+  const handleUpdateApiKey = (newKey: string) => {
+    setApiKey(newKey);
+    localStorage.setItem('user_api_key', newKey);
+  };
 
   const onFinalizeAndLearn = (mappings: {category: string, selection: string, partNumber: string}[]) => {
     if (!currentMOModel || currentMOModel === 'Generic') return;
@@ -108,8 +114,6 @@ const App: React.FC = () => {
     reader.onload = (evt) => {
       try {
         const imported = JSON.parse(evt.target?.result as string);
-        
-        // Handle legacy imports (only knowledge base) or v2.0 imports
         const newKB = imported.knowledgeBase || imported;
         const newGlossary = imported.glossary || glossary;
 
@@ -139,6 +143,8 @@ const App: React.FC = () => {
             parts={parts} 
             glossary={glossary}
             onGlossaryUpdate={g => { setGlossary(g); persist('bom_glossary', g); }}
+            apiKey={apiKey}
+            onApiKeyUpdate={handleUpdateApiKey}
           />
         );
       case AppScreen.MO_PROVISION:
@@ -147,6 +153,7 @@ const App: React.FC = () => {
             parts={parts} 
             knowledgeBase={knowledgeBase}
             glossary={glossary}
+            apiKey={apiKey}
             onModelDetected={setCurrentMOModel}
             onAutoSelect={(newIds) => {
               const updated = new Set([...selectedPartIds, ...Array.from(newIds)]);
@@ -164,6 +171,8 @@ const App: React.FC = () => {
         return null;
     }
   };
+
+  const effectiveApiKey = apiKey || process.env.API_KEY;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans">
@@ -189,7 +198,28 @@ const App: React.FC = () => {
         </div>
       </header>
       <main className="flex-1 container mx-auto p-4 md:p-8">
-        <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-200 min-h-[650px] overflow-hidden">{renderScreen()}</div>
+        <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-200 min-h-[650px] overflow-hidden relative">
+          {(!effectiveApiKey && activeScreen === AppScreen.MO_PROVISION) && (
+            <div className="absolute inset-0 z-[60] bg-white/80 backdrop-blur-md flex items-center justify-center p-8">
+              <div className="bg-white border-2 border-amber-200 p-12 rounded-[3rem] shadow-2xl max-w-md w-full text-center space-y-6">
+                <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-500">
+                  <Key size={40} />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Intelligence Connection Required</h3>
+                  <p className="text-xs text-slate-500 font-medium leading-relaxed uppercase">To process Factory Orders using AI, you must provide a Gemini API Key. This can be permanently configured in the Logic section.</p>
+                </div>
+                <button 
+                  onClick={() => setActiveScreen(AppScreen.CONFIG)}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-xl text-xs uppercase tracking-widest"
+                >
+                  Configure Connection
+                </button>
+              </div>
+            </div>
+          )}
+          {renderScreen()}
+        </div>
       </main>
       <footer className="bg-white border-t p-6">
         <div className="container mx-auto flex justify-between items-center px-4">
@@ -200,7 +230,18 @@ const App: React.FC = () => {
               <label className="text-[10px] font-black uppercase bg-slate-50 hover:bg-slate-100 text-slate-500 px-3 py-1 rounded-md border flex items-center gap-1 transition-all cursor-pointer"><Upload size={10} /> Import Brain<input type="file" className="hidden" onChange={importBrain} /></label>
             </div>
           </div>
-          <BrainCircuit className="text-indigo-300 animate-pulse" size={20} />
+          <div className="flex items-center gap-3">
+            {effectiveApiKey ? (
+              <div className="flex items-center gap-2 text-emerald-500 text-[9px] font-black uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+                <ShieldAlert size={10} /> Neural Link Active
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-amber-500 text-[9px] font-black uppercase tracking-widest bg-amber-50 px-3 py-1 rounded-full border border-amber-100">
+                <ShieldAlert size={10} /> Neural Link Pending
+              </div>
+            )}
+            <BrainCircuit className="text-indigo-300 animate-pulse" size={20} />
+          </div>
         </div>
       </footer>
     </div>

@@ -15,7 +15,6 @@ import {
   History,
   ShieldCheck,
   SearchCode,
-  // Added missing Book icon
   Book
 } from 'lucide-react';
 
@@ -28,6 +27,7 @@ interface Props {
   parts: BOMPart[];
   knowledgeBase: MachineKnowledge;
   glossary: TechnicalGlossary;
+  apiKey: string;
   onAutoSelect: (selectedIds: Set<string>) => void;
   onModelDetected: (model: string) => void;
   onNavigateToSelection: () => void;
@@ -45,7 +45,7 @@ interface MatchResult {
 
 const STOP_WORDS = new Set(['WITH', 'AND', 'THE', 'FOR', 'NON', 'NONE', 'SELECTED', 'UNIT', 'OPTIONS']);
 
-const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, onAutoSelect, onModelDetected, onNavigateToSelection }) => {
+const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, onAutoSelect, onModelDetected, onNavigateToSelection }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [results, setResults] = useState<MatchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -54,12 +54,9 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, onAutoSe
   const partIndex = useMemo(() => {
     return parts.map(p => {
       let technicalSource = `${p.Name} ${p.Remarks} ${p.Std_Remarks} ${p.Ref_des}`.toUpperCase();
-      
-      // Expand source with user-defined glossary
       Object.entries(glossary).forEach(([abbr, full]) => {
         if (technicalSource.includes(abbr)) technicalSource += ` ${full}`;
       });
-
       return {
         part: p,
         tokens: new Set(technicalSource.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s))),
@@ -71,24 +68,28 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, onAutoSe
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
+    const effectiveApiKey = apiKey || process.env.API_KEY;
+
     if (!files || files.length === 0 || parts.length === 0) return;
+    if (!effectiveApiKey) {
+      setError("Connection Failure: No API Key Configured.");
+      return;
+    }
 
     setIsProcessing(true);
     setError(null);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: effectiveApiKey });
       const resultsBatch: MatchResult[] = [];
       let detectedModel = 'Generic';
 
       const filePromises = (Array.from(files) as File[]).map(async (file) => {
         const base64 = await new Promise<string>((res) => {
           const r = new FileReader();
-          // Use a type-safe approach to extract base64 from FileReader result
           r.onload = () => {
             const result = r.result;
             if (typeof result === 'string') {
-              // Cast result to string to access .split() safely in case of type inference issues
               res((result as string).split(',')[1] || '');
             } else {
               res('');
@@ -102,7 +103,6 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, onAutoSe
           1. Identify Machine Model (e.g. D65P-16, PC300).
           2. Extract the Configuration Table (Columns: Name/Category, Option/Selection, Quantity).
           IGNORE noise rows like "No option selected".
-          
           RETURN STRICT JSON: {"model": "string", "options": [{"category": "string", "selection": "string", "quantity": "string"}]}
         `;
 
@@ -135,12 +135,9 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, onAutoSe
       allOptions.forEach(opt => {
         const queryRaw = `${opt.category} ${opt.selection}`.toUpperCase();
         let queryTokens = queryRaw.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s));
-        
-        // Expand query with user-defined glossary
         Object.entries(glossary).forEach(([abbr, full]) => {
           if (queryRaw.includes(abbr)) queryTokens.push(...full.split(' '));
         });
-
         const queryTokenSet = new Set(queryTokens);
         const catTokens = new Set(opt.category.toUpperCase().split(/[\s,./()]+/));
 
@@ -178,7 +175,7 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, onAutoSe
       if (matchedIds.size > 0) onAutoSelect(matchedIds);
     } catch (err) {
       console.error(err);
-      setError("Intelligence Engine Error.");
+      setError("Intelligence Engine Error: Please verify your API Key and connection.");
     } finally {
       setIsProcessing(false);
     }
@@ -186,6 +183,12 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, onAutoSe
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
+      {error && (
+        <div className="bg-red-50 border-2 border-red-100 p-4 rounded-2xl flex items-center gap-4 text-red-600 animate-in fade-in slide-in-from-top-2">
+          <AlertCircle size={20} />
+          <p className="text-xs font-black uppercase tracking-widest">{error}</p>
+        </div>
+      )}
       <div className="flex justify-between items-end border-b pb-8">
         <div className="space-y-2">
           <h2 className="text-4xl font-black text-slate-800 tracking-tighter flex items-center gap-3">
