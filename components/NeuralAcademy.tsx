@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { MachineKnowledge, LearningEntry, BOMPart, ConfigRule, ConfidenceLevel, TechnicalGlossary } from '../types';
@@ -109,7 +108,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
     const modelsCount = modelKeys.length;
     let entriesCount = 0;
     modelKeys.forEach(k => {
-      const entries = knowledgeBase[k] as LearningEntry[];
+      const entries = (knowledgeBase[k] as LearningEntry[]) || [];
       entriesCount += entries.length;
     });
     return { models: modelsCount, entries: entriesCount };
@@ -496,7 +495,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                          </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                         {pendingMatches.map((match, idx) => (
+                         {pendingMatches.map((match) => (
                             <tr key={match.id} className="hover:bg-slate-50/50 group">
                                <td className="px-6 py-4">
                                   <p className="text-[10px] font-black text-indigo-600 uppercase mb-0.5">{match.category}</p>
@@ -509,8 +508,11 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                                        value={match.manualPartNumber} 
                                        onChange={(e) => {
                                           const next = [...pendingMatches];
-                                          next[idx].manualPartNumber = e.target.value.toUpperCase();
-                                          setPendingMatches(next);
+                                          const idx = next.findIndex(m => m.id === match.id);
+                                          if (idx !== -1) {
+                                            next[idx].manualPartNumber = e.target.value.toUpperCase();
+                                            setPendingMatches(next);
+                                          }
                                        }}
                                        className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-2 text-xs font-mono font-bold outline-none focus:bg-white focus:border-indigo-400 transition-all"
                                      />
@@ -547,49 +549,52 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {Object.keys(knowledgeBase).map(model => (
-                      <div key={model} className="bg-slate-50 rounded-[2rem] p-8 border border-slate-100 hover:border-indigo-300 transition-all group">
-                         <div className="flex justify-between items-start mb-6">
-                            <div className="p-3 bg-white rounded-2xl shadow-sm text-indigo-600 border border-slate-100">
-                               <Database size={20} />
-                            </div>
-                            <div className="flex gap-2">
-                               <button onClick={() => exportPortableModel(model)} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-indigo-600 transition-all shadow-sm"><FileJson size={16} /></button>
-                               <button onClick={() => {
-                                 const entries = knowledgeBase[model] as LearningEntry[];
-                                 const XLSX = (window as any).XLSX;
-                                 if (!XLSX) return;
-                                 const ws = XLSX.utils.json_to_sheet(entries);
-                                 const wb = XLSX.utils.book_new();
-                                 XLSX.utils.book_append_sheet(wb, ws, "Neural Data");
-                                 XLSX.writeFile(wb, `Weights_${model}.xlsx`);
-                               }} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 transition-all shadow-sm"><Download size={16} /></button>
-                               <button 
-                                 onClick={() => {
-                                   if (confirm(`Wipe memory for [${model}]?`)) {
-                                      const next = { ...knowledgeBase };
-                                      delete next[model];
-                                      onKnowledgeBaseUpdate(next);
-                                   }
-                                 }}
-                                 className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-red-500 transition-all"
-                               >
-                                 <Trash2 size={16} />
-                               </button>
-                            </div>
-                         </div>
-                         <h4 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">{model}</h4>
-                         <div className="flex items-center justify-between mt-8">
-                            <div className="flex flex-col">
-                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Learned Nodes</span>
-                               <span className="text-lg font-black text-indigo-600">{(knowledgeBase[model] as LearningEntry[]).length} Connections</span>
-                            </div>
-                            <div className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-emerald-100">
-                               <ShieldCheck size={14} /> Ready
-                            </div>
-                         </div>
-                      </div>
-                    ))}
+                    {Object.keys(knowledgeBase).map(model => {
+                      const entryCount = (knowledgeBase[model] as LearningEntry[] || []).length;
+                      return (
+                        <div key={model} className="bg-slate-50 rounded-[2rem] p-8 border border-slate-100 hover:border-indigo-300 transition-all group">
+                          <div className="flex justify-between items-start mb-6">
+                              <div className="p-3 bg-white rounded-2xl shadow-sm text-indigo-600 border border-slate-100">
+                                <Database size={20} />
+                              </div>
+                              <div className="flex gap-2">
+                                <button onClick={() => exportPortableModel(model)} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-indigo-600 transition-all shadow-sm"><FileJson size={16} /></button>
+                                <button onClick={() => {
+                                  const entries = (knowledgeBase[model] as LearningEntry[]) || [];
+                                  const XLSX = (window as any).XLSX;
+                                  if (!XLSX) return;
+                                  const ws = XLSX.utils.json_to_sheet(entries);
+                                  const wb = XLSX.utils.book_new();
+                                  XLSX.utils.book_append_sheet(wb, ws, "Neural Data");
+                                  XLSX.writeFile(wb, `Weights_${model}.xlsx`);
+                                }} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 transition-all shadow-sm"><Download size={16} /></button>
+                                <button 
+                                  onClick={() => {
+                                    if (confirm(`Wipe memory for [${model}]?`)) {
+                                        const next = { ...knowledgeBase };
+                                        delete next[model];
+                                        onKnowledgeBaseUpdate(next);
+                                    }
+                                  }}
+                                  className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-red-500 transition-all"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                          </div>
+                          <h4 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">{model}</h4>
+                          <div className="flex items-center justify-between mt-8">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Learned Nodes</span>
+                                <span className="text-lg font-black text-indigo-600">{entryCount} Connections</span>
+                              </div>
+                              <div className="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1.5">
+                                <ShieldCheck size={14} /> Ready
+                              </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
              </div>

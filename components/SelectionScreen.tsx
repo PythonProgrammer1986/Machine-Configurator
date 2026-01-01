@@ -1,4 +1,3 @@
-
 import React, { useMemo, useCallback, useState } from 'react';
 import { BOMPart, ConfigRule } from '../types';
 import { 
@@ -8,12 +7,8 @@ import {
   ChevronUp, 
   ShieldCheck, 
   Search, 
-  AlertTriangle, 
-  UserCheck, 
-  Sparkles,
   Check,
   SortAsc,
-  Filter,
   Zap
 } from 'lucide-react';
 
@@ -30,10 +25,9 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [sortByFCode, setSortByFCode] = useState(false);
 
-  // Updated to include F_Code 9 (Reference parts that now act as optional selections)
+  // F_Code 9 is now explicitly treated as a configuration part
   const configParts = useMemo(() => parts.filter(p => p.F_Code === 1 || p.F_Code === 2 || p.F_Code === 9), [parts]);
 
-  // High Performance Logic Solver
   const logicSelectedIds = useMemo(() => {
     const currentLogicSelected = new Set<string>();
     let changed = true;
@@ -127,7 +121,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     });
 
     const progress = totalF2Groups > 0 ? Math.round(((totalF2Groups - missingF2) / totalF2Groups) * 100) : 100;
-    const isValid = missingF2 === 0 && pendingConfirmation === 0;
+    const isValid = missingF2 === 0; // Simplified for "Proceed with Suggestion" context
 
     return { isValid, progress, pendingConfirmation };
   }, [groupedParts, selectedIds, logicSelectedIds]);
@@ -147,12 +141,15 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
   }, [selectedIds, groupedParts, onSelectionChange]);
 
   const handleProceedWithSuggestion = () => {
-    const combined = new Set([...selectedIds, ...logicSelectedIds]);
-    onSelectionChange(combined);
-    // Use setTimeout to allow the set to propagate to parent state before generating
+    // Automatically accept everything recommended by logic
+    const merged = new Set(selectedIds);
+    logicSelectedIds.forEach(id => merged.add(id));
+    onSelectionChange(merged);
+    
+    // Defer navigation slightly to ensure state is committed
     setTimeout(() => {
       onGenerate();
-    }, 100);
+    }, 50);
   };
 
   const getFCodeStyle = (fcode: number) => {
@@ -184,7 +181,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                 ></div>
               </div>
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                {validation.progress}% Validated
+                {validation.progress}% Mandatory Choices Made
               </span>
             </div>
           </div>
@@ -192,14 +189,14 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
           <div className="flex items-center gap-3">
             <button 
               onClick={handleProceedWithSuggestion}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all bg-indigo-50 border border-indigo-200 text-indigo-600 hover:bg-indigo-100"
+              className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg"
             >
-              <Zap size={14} className="fill-indigo-600" /> Proceed with Suggestion
+              <Zap size={14} className="fill-white" /> Proceed with Suggestion
             </button>
             <button 
               onClick={() => setSortByFCode(!sortByFCode)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                sortByFCode ? 'bg-indigo-50 border-indigo-200 text-indigo-600 shadow-inner' : 'bg-white border-slate-200 text-slate-500 shadow-sm'
+                sortByFCode ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-500'
               }`}
             >
               <SortAsc size={14} /> Sort by F-Code
@@ -211,7 +208,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                 placeholder="Find components..." 
                 value={searchTerm} 
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:border-indigo-500 focus:bg-white outline-none w-64 transition-all"
+                className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:border-indigo-500 focus:bg-white outline-none w-48 lg:w-64 transition-all"
               />
             </div>
             <button 
@@ -220,7 +217,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
               className={`px-6 py-2.5 rounded-xl flex items-center gap-2 font-black transition-all text-[10px] uppercase tracking-widest shadow-lg ${
                 validation.isValid 
                 ? 'bg-indigo-600 hover:bg-indigo-700 text-white' 
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
               }`}
             >
               <ShieldCheck size={16} /> Finalize BOM
@@ -233,7 +230,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
         {groupedParts.length === 0 ? (
           <div className="h-96 flex flex-col items-center justify-center text-slate-300">
              <Search size={48} className="opacity-20 mb-4" />
-             <p className="text-xs font-black uppercase tracking-widest">No matching items found in database</p>
+             <p className="text-xs font-black uppercase tracking-widest">No matching items found</p>
           </div>
         ) : groupedParts.map(([group, items]) => {
           const isExpanded = expandedGroups.has(group) || searchTerm.length > 0;
@@ -286,7 +283,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                         onClick={() => toggleSelection(part)}
                         className={`flex flex-col text-left p-6 rounded-[2rem] border-2 transition-all group/card ${
                           isSelected ? 'border-emerald-500 bg-emerald-50/20 shadow-lg scale-[1.02]' : 
-                          isRecommended ? 'border-amber-400 bg-amber-50/20' : 'border-slate-100 hover:border-indigo-200 bg-slate-50/30'
+                          isRecommended ? 'border-amber-400 bg-amber-50/20 shadow-sm' : 'border-slate-100 hover:border-indigo-200 bg-slate-50/30'
                         }`}
                       >
                         <div className="flex justify-between items-start mb-4">
@@ -298,7 +295,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                           </div>
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
                             isSelected ? 'bg-emerald-600 border-emerald-600 text-white' : 
-                            isRecommended ? 'bg-amber-500 border-amber-500 text-white shadow-[0_0_10px_rgba(245,158,11,0.4)]' : 'border-slate-200 group-hover/card:border-indigo-400'
+                            isRecommended ? 'bg-amber-500 border-amber-500 text-white shadow-amber-200' : 'border-slate-200 group-hover/card:border-indigo-400'
                           }`}>
                             {(isSelected || isRecommended) && <Check size={12} strokeWidth={4} />}
                           </div>
