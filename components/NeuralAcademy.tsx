@@ -23,8 +23,7 @@ import {
   Check
 } from 'lucide-react';
 
-// Explicit interface for Excel data to prevent TS build errors
-interface BOMExcelRow {
+interface ExcelRow {
   Part_Number?: string | number;
   Name?: string;
   Remarks?: string;
@@ -32,6 +31,13 @@ interface BOMExcelRow {
   Ref_des?: string;
   F_Code?: string | number;
   [key: string]: any;
+}
+
+interface NeuralWeights {
+  modelName: string;
+  knowledgeBase: MachineKnowledge;
+  timestamp: string;
+  type: string;
 }
 
 interface Props {
@@ -60,7 +66,7 @@ const STOP_WORDS = new Set(['WITH', 'AND', 'THE', 'FOR', 'NON', 'NONE', 'SELECTE
 
 const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, apiKey, parts, rules, onRulesUpdate, glossary }) => {
   const [moFiles, setMoFiles] = useState<File[]>([]);
-  const [targetBom, setTargetBom] = useState<BOMExcelRow[] | null>(null);
+  const [targetBom, setTargetBom] = useState<ExcelRow[] | null>(null);
   const [baselineKnowledge, setBaselineKnowledge] = useState<MachineKnowledge | null>(null);
   const [useExistingBOM, setUseExistingBOM] = useState(true);
   const [machineModel, setMachineModel] = useState('');
@@ -75,7 +81,6 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
   const addLog = (msg: string, type: 'info' | 'success' | 'error' | 'warn' = 'info') => 
     setTrainingLog(prev => [{ msg: `[${new Date().toLocaleTimeString()}] ${msg}`, type }, ...prev]);
 
-  // Normalized matching index
   const partIndex = useMemo(() => {
     const sourceParts = useExistingBOM ? parts : (targetBom || []);
     return (sourceParts as any[]).map(p => {
@@ -85,6 +90,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       const pRef = String(p.Ref_des || '').toUpperCase();
       let technicalSource = `${pName} ${pRemarks} ${pStd} ${pRef}`;
       
+      // Fix for Error in file components/NeuralAcademy.tsx on line 94: Property 'toUpperCase' does not exist on type 'unknown'.
       (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
         if (technicalSource.includes(abbr.toUpperCase())) technicalSource += ` ${full.toUpperCase()}`;
       });
@@ -105,11 +111,10 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
     reader.onload = (evt) => {
       try {
         const json = JSON.parse(evt.target?.result as string);
-        // Supports both single model and full KB exports
-        setBaselineKnowledge(json.knowledgeBase || (json.modelName ? json.knowledgeBase : json));
+        setBaselineKnowledge(json.knowledgeBase || json);
         addLog(`Intelligence teacher loaded successfully.`, 'success');
       } catch (err) {
-        addLog(`Error parsing baseline JSON.`, 'error');
+        addLog(`Error parsing baseline weights.`, 'error');
       }
     };
     reader.readAsText(file);
@@ -123,13 +128,14 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       try {
         const bstr = evt.target?.result;
         const XLSX = (window as any).XLSX;
+        if (!XLSX) throw new Error("Excel Library not loaded");
         const wb = XLSX.read(bstr, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws) as BOMExcelRow[];
+        const data = XLSX.utils.sheet_to_json(ws) as ExcelRow[];
         setTargetBom(data);
-        addLog(`BOM Reference [${data.length} items] mapped.`, 'success');
+        addLog(`Technical Reference [${data.length} items] mapped.`, 'success');
       } catch (err) {
-        addLog(`Excel processing error.`, 'error');
+        addLog(`Excel load failed.`, 'error');
       }
     };
     reader.readAsBinaryString(file);
@@ -140,21 +146,21 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
     const groundTruth = useExistingBOM ? parts : targetBom;
 
     if (!effectiveApiKey || moFiles.length === 0 || !groundTruth || !machineModel) {
-      alert("Missing configuration: Model Name, MO Files, and BOM reference are required.");
+      alert("Missing configuration: Model Name, MO Files, and Reference BOM are required.");
       return;
     }
 
     setIsTraining(true);
     setTrainingLog([]);
     setPendingMatches([]);
-    addLog(`Engine Initiated: Profile [${machineModel}]`, 'info');
+    addLog(`Neural Engine Initiated: Profile [${machineModel}]`, 'info');
 
     try {
       const ai = new GoogleGenAI({ apiKey: effectiveApiKey });
       const currentMatches: ExtractionMatch[] = [];
 
       for (const file of moFiles) {
-        addLog(`Scanning ${file.name}...`, 'info');
+        addLog(`Scanning document: ${file.name}...`, 'info');
         const base64 = await new Promise<string>((res) => {
           const r = new FileReader();
           r.onload = () => res((r.result as string).split(',')[1] || '');
@@ -163,8 +169,8 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
         const prompt = `
           ACT AS A SENIOR CONFIGURATION ENGINEER.
-          SCAN PAGES: ${pageRange}. 
-          EXTRACT CONFIGURATION TABLE.
+          STRICTLY SCAN PAGES: ${pageRange}. 
+          EXTRACT ALL CONFIGURATION OPTIONS.
           JSON SCHEMA: {"options": [{"category": "string", "selection": "string"}]}
         `;
 
@@ -183,12 +189,12 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
         const options = extracted.options || [];
         
         options.forEach((opt: any, idx: number) => {
-          // NORMALIZATION: Crucial for "Connection" consistency
           const normCat = String(opt.category || 'GENERAL').trim().toUpperCase();
           const normSel = String(opt.selection || 'UNDEFINED').trim().toUpperCase();
           const queryRaw = `${normCat} ${normSel}`;
           
           let queryTokens = queryRaw.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s));
+          // Fix for Error in file components/NeuralAcademy.tsx on line 197: Property 'toUpperCase' does not exist on type 'unknown'.
           (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
             if (queryRaw.includes(abbr.toUpperCase())) queryTokens.push(...full.toUpperCase().split(' '));
           });
@@ -196,14 +202,14 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
           let bestMatchPart: BOMPart | undefined;
           let topScore = 0;
-          let finalSource: ExtractionMatch['source'] = 'None';
 
           partIndex.forEach(ip => {
             let score = 0;
             if (queryRaw.includes(ip.pn)) score = 1.1;
             
             if (baselineKnowledge) {
-              const baselineHits = (Object.values(baselineKnowledge) as LearningEntry[][]).flat();
+              // Fix for Error in file components/NeuralAcademy.tsx on line 210: Property 'category'/'selection'/'partNumber' does not exist on type 'unknown'.
+              const baselineHits = Object.values(baselineKnowledge).flat() as LearningEntry[];
               if (baselineHits.find(h => h.category.toUpperCase() === normCat && h.selection.toUpperCase() === normSel && h.partNumber.toUpperCase() === ip.pn)) score = Math.max(score, 1.05);
             }
             
@@ -235,9 +241,9 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       }
 
       setPendingMatches(currentMatches.sort((a, b) => b.confidence - a.confidence));
-      addLog(`Extraction finished. ${currentMatches.length} patterns discovered.`, 'success');
+      addLog(`Academy Extraction Finished. ${currentMatches.length} patterns identified.`, 'success');
     } catch (err: any) {
-      addLog(`Engine Error: ${err.message || 'Unknown failure'}`, 'error');
+      addLog(`Training Error: ${err.message || 'Unknown failure'}`, 'error');
     } finally {
       setIsTraining(false);
     }
@@ -245,13 +251,13 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
   const commitMatches = () => {
     const newKB = { ...knowledgeBase };
-    const modelKey = machineModel.toUpperCase();
+    const modelKey = machineModel.trim().toUpperCase();
     if (!newKB[modelKey]) newKB[modelKey] = [];
 
     let count = 0;
     pendingMatches.forEach(m => {
-      const finalPN = (m.manualPartNumber || m.suggestedPart?.Part_Number || '').toUpperCase().trim();
-      if (finalPN && finalPN.length > 0) {
+      const finalPN = (m.manualPartNumber || m.suggestedPart?.Part_Number || '').trim().toUpperCase();
+      if (finalPN) {
         const entry: LearningEntry = {
           category: m.category.trim().toUpperCase(),
           selection: m.selection.trim().toUpperCase(),
@@ -274,16 +280,16 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
     onKnowledgeBaseUpdate(newKB);
     setPendingMatches([]);
-    addLog(`Memory Sync: ${count} links finalized for [${modelKey}].`, 'success');
+    addLog(`Intelligence Committed: ${count} nodes synced to [${modelKey}].`, 'success');
   };
 
   const promoteToRule = (match: ExtractionMatch) => {
-    const finalPN = (match.manualPartNumber || match.suggestedPart?.Part_Number || '').toUpperCase().trim();
+    const finalPN = (match.manualPartNumber || match.suggestedPart?.Part_Number || '').trim().toUpperCase();
     if (!finalPN) return;
 
     const part = parts.find(p => p.Part_Number.toUpperCase() === finalPN);
     if (!part) {
-      alert("Cannot promote: Part must exist in main database to create logic rules.");
+      alert("Part number not found in main database. Manual creation required.");
       return;
     }
 
@@ -299,31 +305,31 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       isActive: true
     };
     onRulesUpdate([...rules.filter(r => r.targetPartId !== part.id), newRule]);
-    addLog(`Rule Promotion: Permanent logic created for ${finalPN}.`, 'success');
+    addLog(`Rule Promotion: Permanent dependency logic saved for ${finalPN}.`, 'success');
   };
 
   const exportPortableModel = (model: string) => {
-    const data = {
+    const data: NeuralWeights = {
       modelName: model,
       knowledgeBase: { [model]: knowledgeBase[model] },
       timestamp: new Date().toISOString(),
-      type: "NEURAL_WEIGHTS",
-      version: "2.5"
+      type: "NEURAL_WEIGHTS"
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ModelWeights_${model}.json`;
+    a.download = `Neural_Weights_${model}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    addLog(`Weights exported for [${model}].`, 'info');
+    addLog(`Exported portable weights for [${model}].`, 'info');
   };
 
   const stats = useMemo(() => {
-    const models = Object.keys(knowledgeBase).length;
-    const entries = (Object.values(knowledgeBase) as LearningEntry[][]).flat().length;
-    return { models, entries };
+    const modelsCount = Object.keys(knowledgeBase).length;
+    // Fix for Error in file components/NeuralAcademy.tsx on line 327: Property 'length' does not exist on type 'unknown'.
+    const entriesCount = Object.values(knowledgeBase).reduce((acc, curr) => acc + (curr as LearningEntry[]).length, 0);
+    return { models: modelsCount, entries: entriesCount };
   }, [knowledgeBase]);
 
   return (
@@ -337,18 +343,16 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
             <h2 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">Neural Academy</h2>
             <div className="flex items-center gap-4 mt-1">
                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                 Active Models: {stats.models}
+                 Active Intelligence Models: {stats.models}
                </span>
                <span className="text-slate-200">|</span>
-               <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Mastered Nodes: {stats.entries}</span>
+               <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Learned Nodes: {stats.entries}</span>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-right">
-            <p className="text-[10px] font-black text-slate-400 uppercase">System IQ Level</p>
-            <p className="text-2xl font-black text-indigo-600">{(stats.entries / (parts.length || 1) * 100).toFixed(1)}%</p>
-          </div>
+        <div className="text-right">
+          <p className="text-[10px] font-black text-slate-400 uppercase">Knowledge Density</p>
+          <p className="text-2xl font-black text-indigo-600">{(stats.entries / (parts.length || 1) * 100).toFixed(1)}%</p>
         </div>
       </div>
 
@@ -356,7 +360,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
         <div className="lg:col-span-4 space-y-6">
           <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 shadow-sm space-y-8">
             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2 border-b pb-4">
-              <Zap size={14} className="text-indigo-500" /> Training Settings
+              <Zap size={14} className="text-indigo-500" /> Session Configuration
             </h3>
             
             <div className="space-y-4">
@@ -364,7 +368,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Machine Profile</label>
                 <input 
                   type="text" 
-                  placeholder="e.g. D65-17 PRODUCTION" 
+                  placeholder="e.g. PC2000-11 PRODUCTION" 
                   value={machineModel}
                   onChange={e => setMachineModel(e.target.value.toUpperCase())}
                   className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all shadow-inner"
@@ -372,7 +376,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Page Range</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Extraction Pages</label>
                 <input 
                   type="text" 
                   value={pageRange}
@@ -382,22 +386,22 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Import Teacher Weights</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Baseline Weights</label>
                 <div onClick={() => baselineInputRef.current?.click()} className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center cursor-pointer ${baselineKnowledge ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'}`}>
                   <input type="file" ref={baselineInputRef} className="hidden" accept=".json" onChange={handleBaselineUpload} />
                   <BookOpenCheck size={20} className={baselineKnowledge ? 'text-indigo-600' : 'text-slate-300'} />
-                  <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{baselineKnowledge ? 'Teacher Active' : 'Load JSON Weights'}</span>
+                  <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{baselineKnowledge ? 'Teacher Active' : 'Load Neural Weights'}</span>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Historical MOs</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Historical Factory Orders</label>
                 <div className="relative group">
                   <input type="file" multiple accept="image/*,application/pdf" onChange={(e) => setMoFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
                   <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center group-hover:border-indigo-300 transition-all">
                     <FileText className="text-slate-300 group-hover:text-indigo-500" size={24} />
                     <span className="text-[9px] font-black text-slate-400 mt-2 uppercase">
-                      {moFiles.length > 0 ? `${moFiles.length} Selected` : 'Upload MO PDFs'}
+                      {moFiles.length > 0 ? `${moFiles.length} Selected` : 'Upload MO Documents'}
                     </span>
                   </div>
                 </div>
@@ -405,8 +409,8 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
               <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100">
                  <div>
-                    <p className="text-[10px] font-black text-slate-800 uppercase tracking-tight">Repository Sync</p>
-                    <p className="text-[8px] font-bold text-slate-400 uppercase">Use existing BOM database</p>
+                    <p className="text-[10px] font-black text-slate-800 uppercase tracking-tight">Sync With Live DB</p>
+                    <p className="text-[8px] font-bold text-slate-400 uppercase">Cross-ref against repository</p>
                  </div>
                  <button onClick={() => setUseExistingBOM(!useExistingBOM)} className={`w-12 h-6 rounded-full transition-all relative ${useExistingBOM ? 'bg-indigo-600' : 'bg-slate-300'}`}>
                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${useExistingBOM ? 'left-7' : 'left-1'}`}></div>
@@ -415,11 +419,11 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
               {!useExistingBOM && (
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Ground Truth Excel</label>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Target BOM Source</label>
                   <div onClick={() => excelInputRef.current?.click()} className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center cursor-pointer ${targetBom ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'}`}>
                     <input type="file" ref={excelInputRef} className="hidden" onChange={handleExcelUpload} />
                     <Database size={20} className={targetBom ? 'text-emerald-500' : 'text-slate-300'} />
-                    <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{targetBom ? 'Target BOM Ready' : 'Upload Ground Truth'}</span>
+                    <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{targetBom ? 'Reference Loaded' : 'Upload BOM Excel'}</span>
                   </div>
                 </div>
               )}
@@ -433,13 +437,13 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
               }`}
             >
               {isTraining ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
-              {isTraining ? 'Engine Running...' : 'Train Model'}
+              {isTraining ? 'Scanning Intelligence...' : 'Initialize Training'}
             </button>
           </div>
 
           <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white h-64 shadow-2xl overflow-hidden flex flex-col">
              <div className="flex justify-between items-center mb-4">
-               <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Neural Log</h3>
+               <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Live Intelligence Stream</h3>
                <button onClick={() => setTrainingLog([])} className="text-slate-500 hover:text-white transition-colors"><Trash2 size={14} /></button>
              </div>
              <div className="flex-1 overflow-auto font-mono text-[9px] space-y-3 pr-2 custom-scrollbar">
@@ -462,13 +466,13 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
              <div className="bg-white rounded-[2.5rem] border-2 border-indigo-100 p-8 shadow-2xl animate-in slide-in-from-right-4">
                 <div className="flex justify-between items-center mb-8">
                    <div>
-                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Review Extraction</h3>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Refine mappings before linking to Brain Memory.</p>
+                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Review Extraction Nodes</h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Manual overrides persist as Ground Truth in the brain.</p>
                    </div>
                    <div className="flex gap-4">
                       <button onClick={() => setPendingMatches([])} className="px-6 py-3 bg-slate-50 text-slate-400 text-[10px] font-black uppercase rounded-xl">Discard</button>
                       <button onClick={commitMatches} className="px-8 py-3 bg-indigo-600 text-white hover:bg-indigo-700 text-[10px] font-black uppercase rounded-xl shadow-lg transition-all flex items-center gap-2">
-                         <RefreshCw size={14} /> Commit To Memory
+                         <RefreshCw size={14} /> Commit Patterns
                       </button>
                    </div>
                 </div>
@@ -477,8 +481,8 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                    <table className="w-full text-left">
                       <thead className="bg-slate-50 border-b">
                          <tr>
-                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">MO Detail</th>
-                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Part Number Link</th>
+                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Order Specification</th>
+                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Neural Part Number Link</th>
                             <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase text-center">Action</th>
                          </tr>
                       </thead>
@@ -532,7 +536,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                 {stats.models === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-200 opacity-30 py-40">
                      <History size={80} className="mb-6" />
-                     <p className="text-xs font-black uppercase tracking-[0.4em]">Intelligence Reservoir Empty</p>
+                     <p className="text-xs font-black uppercase tracking-[0.4em]">Intelligence reservoir empty</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -546,14 +550,16 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                                <button onClick={() => exportPortableModel(model)} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-indigo-600 transition-all hover:shadow-lg" title="Portable Weights"><FileJson size={16} /></button>
                                <button onClick={() => {
                                  const entries = knowledgeBase[model];
-                                 const ws = (window as any).XLSX.utils.json_to_sheet(entries);
-                                 const wb = (window as any).XLSX.utils.book_new();
-                                 (window as any).XLSX.utils.book_append_sheet(wb, ws, "Neural Data");
-                                 (window as any).XLSX.writeFile(wb, `Report_${model}.xlsx`);
-                               }} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 transition-all hover:shadow-lg" title="Excel Report"><Download size={16} /></button>
+                                 const XLSX = (window as any).XLSX;
+                                 if (!XLSX) return;
+                                 const ws = XLSX.utils.json_to_sheet(entries);
+                                 const wb = XLSX.utils.book_new();
+                                 XLSX.utils.book_append_sheet(wb, ws, "Neural Data");
+                                 XLSX.writeFile(wb, `Neural_Weights_${model}.xlsx`);
+                               }} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 transition-all hover:shadow-lg" title="Excel Export"><Download size={16} /></button>
                                <button 
                                  onClick={() => {
-                                   if (confirm(`Wipe model [${model}]?`)) {
+                                   if (confirm(`Wipe memory for model [${model}]?`)) {
                                       const next = { ...knowledgeBase };
                                       delete next[model];
                                       onKnowledgeBaseUpdate(next);
@@ -568,8 +574,8 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                          <h4 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">{model}</h4>
                          <div className="flex items-center justify-between mt-8">
                             <div className="flex flex-col">
-                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Density</span>
-                               <span className="text-lg font-black text-indigo-600">{knowledgeBase[model].length} Connections</span>
+                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Mastery</span>
+                               <span className="text-lg font-black text-indigo-600">{(knowledgeBase[model] as LearningEntry[]).length} Connections</span>
                             </div>
                             <div className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
                                <ShieldCheck size={14} /> Ready

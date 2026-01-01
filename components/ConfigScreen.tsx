@@ -70,27 +70,29 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
       };
     });
 
-    // Fix for Error in file components/ConfigScreen.tsx on line 74: Property 'map' does not exist on type 'unknown'.
-    // Explicitly casting Object.entries to ensure entries is recognized as LearningEntry[]
-    const intelData = (Object.entries(knowledgeBase) as [string, LearningEntry[]][]).flatMap(([model, entries]) => 
-      entries.map(e => ({
+    const intelData = (Object.entries(knowledgeBase) as [string, LearningEntry[]][]).reduce((acc: any[], [model, entries]) => {
+      const modelEntries = entries.map(e => ({
         Machine_Model: model,
         Part_Number: e.partNumber,
         Category: e.category,
         Selection_Text: e.selection,
         Hits: e.confirmedCount,
         Last_Used: e.lastUsed
-      }))
-    );
+      }));
+      return [...acc, ...modelEntries];
+    }, []);
 
-    const wb = (window as any).XLSX.book_new();
-    const wsLogic = (window as any).XLSX.utils.json_to_sheet(logicData);
-    const wsIntel = (window as any).XLSX.utils.json_to_sheet(intelData);
+    const XLSX = (window as any).XLSX;
+    if (!XLSX) return;
 
-    (window as any).XLSX.utils.book_append_sheet(wb, wsLogic, "Engineering Logic");
-    (window as any).XLSX.utils.book_append_sheet(wb, wsIntel, "Neural Insights");
+    const wb = XLSX.utils.book_new();
+    const wsLogic = XLSX.utils.json_to_sheet(logicData);
+    const wsIntel = XLSX.utils.json_to_sheet(intelData);
 
-    (window as any).XLSX.writeFile(wb, `BOM_Intelligence_Export_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, wsLogic, "Engineering Logic");
+    XLSX.utils.book_append_sheet(wb, wsIntel, "Neural Insights");
+
+    XLSX.writeFile(wb, `BOM_Intelligence_Base.xlsx`);
   };
 
   const handleImportIntel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -101,14 +103,16 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
     reader.onload = (evt) => {
       try {
         const bstr = evt.target?.result;
-        const wb = (window as any).XLSX.read(bstr, { type: 'binary' });
+        const XLSX = (window as any).XLSX;
+        if (!XLSX) return;
         
-        // 1. Process Engineering Logic
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        
         if (wb.SheetNames.includes("Engineering Logic")) {
-          const logicRows = (window as any).XLSX.utils.sheet_to_json(wb.Sheets["Engineering Logic"]);
+          const logicRows = XLSX.utils.sheet_to_json(wb.Sheets["Engineering Logic"]) as any[];
           const newRules: ConfigRule[] = [...rules];
           
-          logicRows.forEach((row: any) => {
+          logicRows.forEach((row) => {
             const part = parts.find(p => p.Part_Number === String(row.Part_Number));
             if (!part) return;
 
@@ -129,19 +133,18 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
           onRulesUpdate(newRules);
         }
 
-        // 2. Process Neural Insights
         if (wb.SheetNames.includes("Neural Insights")) {
-          const intelRows = (window as any).XLSX.utils.sheet_to_json(wb.Sheets["Neural Insights"]);
+          const intelRows = XLSX.utils.sheet_to_json(wb.Sheets["Neural Insights"]) as any[];
           const newKB: MachineKnowledge = { ...knowledgeBase };
 
-          intelRows.forEach((row: any) => {
-            const model = String(row.Machine_Model || 'Generic');
+          intelRows.forEach((row) => {
+            const model = String(row.Machine_Model || 'Generic').toUpperCase();
             if (!newKB[model]) newKB[model] = [];
             
             const entry: LearningEntry = {
-              partNumber: String(row.Part_Number),
-              category: String(row.Category),
-              selection: String(row.Selection_Text),
+              partNumber: String(row.Part_Number).toUpperCase(),
+              category: String(row.Category).toUpperCase(),
+              selection: String(row.Selection_Text).toUpperCase(),
               confirmedCount: parseInt(row.Hits) || 1,
               lastUsed: row.Last_Used || new Date().toISOString()
             };
@@ -158,7 +161,6 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
 
         alert("Intelligence Repository Synchronized Successfully");
       } catch (err) {
-        console.error(err);
         alert("Sync Error: The Excel format does not match the required intelligence schema.");
       }
     };
@@ -183,7 +185,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
 
   const addSynonym = () => {
     if (!newSynonym.abbr || !newSynonym.full) return;
-    const updated = { ...glossary, [newSynonym.abbr.toUpperCase()]: newSynonym.full.toUpperCase() };
+    const updated = { ...glossary, [newSynonym.abbr.trim().toUpperCase()]: newSynonym.full.trim().toUpperCase() };
     onGlossaryUpdate(updated);
     setNewSynonym({ abbr: '', full: '' });
   };
@@ -276,13 +278,10 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
             <>
               <input type="file" ref={importFileRef} onChange={handleImportIntel} accept=".xlsx,.xls" className="hidden" />
               <button onClick={() => importFileRef.current?.click()} className="bg-slate-50 hover:bg-slate-100 text-slate-600 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-black border border-slate-200 transition-all shadow-sm">
-                <Upload size={14} /> Import Intel (Excel)
+                <Upload size={14} /> Import Intel
               </button>
               <button onClick={handleExportIntel} className="bg-slate-50 hover:bg-slate-100 text-slate-600 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-black border border-slate-200 transition-all shadow-sm">
-                <Download size={14} /> Export Intel (Excel)
-              </button>
-              <button onClick={() => {}} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-4 py-2 rounded-lg flex items-center gap-2 text-xs font-black border border-emerald-200 transition-all shadow-sm">
-                <Wand2 size={14} /> Smart Auto-Generate
+                <Download size={14} /> Export Intel
               </button>
             </>
           )}
@@ -375,14 +374,14 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
         {activeTab === 'glossary' && (
           <div className="space-y-6">
             <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
-              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">Add Semantic Synonym</h3>
+              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">Add Technical Synonym</h3>
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
                 <div className="md:col-span-3 space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Abbreviation / Key</label>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Key (Abbr)</label>
                   <input type="text" placeholder="e.g. CAB" value={newSynonym.abbr} onChange={(e) => setNewSynonym({...newSynonym, abbr: e.target.value})} className="w-full border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500/50 bg-slate-50/50" />
                 </div>
                 <div className="md:col-span-7 space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Full Technical nomenclature</label>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Full Terminology</label>
                   <input type="text" placeholder="e.g. CABIN ASSEMBLY" value={newSynonym.full} onChange={(e) => setNewSynonym({...newSynonym, full: e.target.value})} className="w-full border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500/5 bg-slate-50/50" />
                 </div>
                 <div className="md:col-span-2">
@@ -407,7 +406,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
         )}
 
         {activeTab === 'system' && (
-          <div className="max-w-2xl mx-auto space-y-8 py-10">
+          <div className="max-w-2xl mx-auto py-10">
             <div className="bg-white border border-slate-200 rounded-[3rem] p-10 shadow-sm relative overflow-hidden">
                <div className="absolute top-0 right-0 p-8 text-indigo-100">
                   <ShieldCheck size={120} />
@@ -415,14 +414,14 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
                <div className="relative z-10 space-y-8">
                   <div className="space-y-2">
                     <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-3">
-                      <Key className="text-indigo-600" /> Intelligence Link
+                      <Key className="text-indigo-600" /> System Connection
                     </h3>
-                    <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Connect to Gemini 3 for Advanced Neural Processing</p>
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Configure API Access for Neural Processing</p>
                   </div>
 
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1">Gemini API Key (Persistent)</label>
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1">Gemini API Key</label>
                       <input 
                         type="password" 
                         placeholder="Paste your API key here..." 
@@ -437,7 +436,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
                         <Info size={16} />
                       </div>
                       <p className="text-[10px] text-slate-500 font-bold leading-relaxed uppercase">
-                        This key is stored locally in your browser's persistent storage. It is never transmitted to our servers—it is used directly to call the Gemini API from your device.
+                        The key is stored locally in your browser session. It is used exclusively to power the neural matching and academy functions.
                       </p>
                     </div>
 
@@ -445,7 +444,7 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
                       onClick={handleSaveApiKey}
                       className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-xl text-xs uppercase tracking-widest"
                     >
-                      <Save size={18} /> Update Secure Connection
+                      <Save size={18} /> Update Configuration
                     </button>
                   </div>
                </div>
