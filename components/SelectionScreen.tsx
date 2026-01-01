@@ -123,6 +123,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     const finalSet = new Set(selectedIds);
     logicSelectedIds.forEach(id => finalSet.add(id));
     onSelectionChange(finalSet);
+    // Move to next frame to allow state update
     setTimeout(onGenerate, 50);
   };
 
@@ -161,7 +162,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                 placeholder="Find PN..." 
                 value={searchTerm} 
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none w-48 transition-all"
+                className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none w-48 transition-all shadow-inner focus:border-indigo-500"
               />
             </div>
             <button 
@@ -188,9 +189,9 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                 const n = new Set(expandedGroups);
                 if (n.has(group)) n.delete(group); else n.add(group);
                 setExpandedGroups(n);
-              }} className="w-full px-8 py-5 flex items-center justify-between hover:bg-slate-50/50">
+              }} className="w-full px-8 py-5 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
                 <div className="flex items-center gap-6">
-                  <div className={`p-3 rounded-xl ${userHasPick ? 'bg-emerald-600 text-white' : logicHasPick ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                  <div className={`p-3 rounded-xl shadow-md ${userHasPick ? 'bg-emerald-600 text-white' : logicHasPick ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                     <Hash size={20} />
                   </div>
                   <div className="text-left flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
@@ -207,15 +208,15 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                     const isS = selectedIds.has(part.id);
                     const isR = logicSelectedIds.has(part.id);
                     return (
-                      <button key={part.id} onClick={() => toggleSelection(part)} className={`flex flex-col text-left p-6 rounded-[2rem] border-2 transition-all group ${isS ? 'border-emerald-500 bg-emerald-50/20 shadow-lg scale-[1.02]' : isR ? 'border-amber-400 bg-amber-50/20 shadow-sm' : 'border-slate-100 hover:border-indigo-200'}`}>
+                      <button key={part.id} onClick={() => toggleSelection(part)} className={`flex flex-col text-left p-6 rounded-[2rem] border-2 transition-all group ${isS ? 'border-emerald-500 bg-emerald-50/20 shadow-lg scale-[1.02]' : isR ? 'border-amber-400 bg-amber-50/20 shadow-sm' : 'border-slate-100 hover:border-indigo-200 bg-slate-50/30'}`}>
                         <div className="flex justify-between items-start mb-4">
                           <span className="text-[9px] font-black font-mono text-slate-400 uppercase tracking-tighter">{part.Part_Number}</span>
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isS ? 'bg-emerald-600 border-emerald-600 text-white' : isR ? 'bg-amber-500 border-amber-500 text-white' : 'border-slate-200'}`}>
+                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isS ? 'bg-emerald-600 border-emerald-600 text-white' : isR ? 'bg-amber-500 border-amber-500 text-white shadow-md' : 'border-slate-200'}`}>
                             {(isS || isR) && <Check size={10} strokeWidth={4} />}
                           </div>
                         </div>
                         <p className="text-xs font-black text-slate-800 leading-tight mb-2 uppercase tracking-tight">{part.Name}</p>
-                        <p className="text-[10px] text-slate-400 italic font-medium line-clamp-2">{part.Remarks}</p>
+                        <p className="text-[10px] text-slate-400 italic font-medium line-clamp-2 leading-relaxed">{part.Remarks}</p>
                       </button>
                     );
                   })}

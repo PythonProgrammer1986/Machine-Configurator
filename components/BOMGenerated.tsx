@@ -26,6 +26,7 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
     onFinalizeKnowledge(m);
     setLearned(true);
     
+    // Preparation for Excel Download mirroring the table
     const exportData = finalBOM.map((p, i) => ({
       "Sr. No": i + 1,
       "Part_Number": p.Part_Number,
@@ -40,27 +41,27 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
     if (XLSX) {
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Final Manifest");
-      XLSX.writeFile(wb, `${modelName}_BOM.xlsx`);
+      XLSX.utils.book_append_sheet(wb, ws, "Verified Manifest");
+      XLSX.writeFile(wb, `${modelName}_BOM_Manifest.xlsx`);
     }
   };
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      <div className="p-8 border-b border-slate-200 bg-white flex justify-between items-center">
+      <div className="p-8 border-b border-slate-200 bg-white flex justify-between items-center shadow-sm">
         <div>
           <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3 uppercase tracking-tight">
             <ShieldCheck className="text-emerald-600" /> Output Manifest
           </h2>
-          <p className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-widest">Target: <span className="text-indigo-600">{modelName}</span></p>
+          <p className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-widest">Target Configuration: <span className="text-indigo-600">{modelName}</span></p>
         </div>
         <div className="flex gap-3">
-          <button onClick={() => window.print()} className="bg-slate-50 text-slate-600 px-6 py-3 rounded-2xl flex items-center gap-2 text-xs font-black uppercase tracking-widest border border-slate-200 shadow-sm">
+          <button onClick={() => window.print()} className="bg-slate-50 text-slate-600 px-6 py-3 rounded-2xl flex items-center gap-2 text-xs font-black uppercase tracking-widest border border-slate-200 shadow-sm transition-all hover:bg-slate-100">
             <Printer size={16} /> Print
           </button>
-          <button onClick={handleFinalize} className={`px-8 py-3 rounded-2xl flex items-center gap-3 text-xs font-black uppercase tracking-widest transition-all shadow-xl ${learned ? 'bg-emerald-500 text-white' : 'bg-indigo-600 text-white shadow-indigo-200'}`}>
+          <button onClick={handleFinalize} className={`px-8 py-3 rounded-2xl flex items-center gap-3 text-xs font-black uppercase tracking-widest transition-all shadow-xl ${learned ? 'bg-emerald-500 text-white' : 'bg-indigo-600 text-white shadow-indigo-200 hover:bg-indigo-700'}`}>
             {learned ? <BrainCircuit size={18} /> : <RefreshCw size={18} />}
-            {learned ? "Weights Saved" : "Confirm & Export"}
+            {learned ? "Pattern Saved" : "Confirm & Export"}
           </button>
         </div>
       </div>
@@ -75,7 +76,10 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">Authorized Assembly Reference</p>
                 </div>
              </div>
-             <p className="text-4xl font-black text-emerald-400">{finalBOM.length} <span className="text-[10px] text-slate-500 uppercase">Items</span></p>
+             <div className="text-right">
+                <p className="text-4xl font-black text-emerald-400">{finalBOM.length}</p>
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total SKU Count</p>
+             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
@@ -92,13 +96,15 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {finalBOM.map((p, i) => (
-                  <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                  <tr key={p.id} className="hover:bg-slate-50 transition-colors group">
                     <td className="px-6 py-5 text-[10px] font-black text-slate-400">{i + 1}</td>
                     <td className="px-6 py-5 text-sm font-mono font-bold text-indigo-600">{p.Part_Number}</td>
                     <td className="px-6 py-5 text-sm font-black text-slate-800 uppercase tracking-tight">{p.Name}</td>
                     <td className="px-6 py-5 text-sm text-center font-bold text-slate-600">{p.Qty || 1}</td>
                     <td className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-tight">{p.Ref_des || '-'}</td>
-                    <td className="px-6 py-5 text-[10px] text-slate-400 italic line-clamp-1">{p.Remarks || '-'}</td>
+                    <td className="px-6 py-5 text-[10px] text-slate-400 italic font-medium leading-relaxed max-w-xs truncate group-hover:whitespace-normal group-hover:overflow-visible transition-all">
+                      {p.Remarks || '-'}
+                    </td>
                     <td className="px-6 py-5 text-center">
                       <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full text-[9px] font-black uppercase">
                         <UserCheck size={10} /> Verified
