@@ -64,7 +64,8 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, knowledgeBase, onPart
 
     data.forEach((row, index) => {
       const part = newParts[index];
-      if (part.F_Code !== 1 && part.F_Code !== 2) return;
+      // Updated to include F_Code 9 as selectable
+      if (part.F_Code !== 1 && part.F_Code !== 2 && part.F_Code !== 9) return;
 
       const excelLogic = row.Logic || row.Logic_Config || row.logic;
       let finalLogic: RuleLogic | null = null;
@@ -114,10 +115,12 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, knowledgeBase, onPart
     const reader = new FileReader();
     reader.onload = (evt) => {
       const bstr = evt.target?.result;
-      const wb = (window as any).XLSX.read(bstr, { type: 'binary' });
+      const XLSX = (window as any).XLSX;
+      if (!XLSX) return;
+      const wb = XLSX.read(bstr, { type: 'binary' });
       const wsname = wb.SheetNames[0];
       const ws = wb.Sheets[wsname];
-      const data = (window as any).XLSX.utils.sheet_to_json(ws);
+      const data = XLSX.utils.sheet_to_json(ws);
 
       const mappedParts: BOMPart[] = data.map((row: any, index: number) => ({
         id: `part-${Date.now()}-${index}`,
@@ -127,6 +130,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, knowledgeBase, onPart
         Std_Remarks: String(row.Std_Remarks || ''),
         F_Code: isNaN(parseInt(row.F_Code)) ? 0 : parseInt(row.F_Code),
         Ref_des: String(row.Ref_des || ''),
+        Qty: isNaN(parseFloat(row.Qty || row.Quantity)) ? 1 : parseFloat(row.Qty || row.Quantity),
         Select_pref: isNaN(parseInt(row.Select_pref)) ? 999999 : parseInt(row.Select_pref),
       }));
 
@@ -149,7 +153,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, knowledgeBase, onPart
             <FileSpreadsheet className="text-indigo-600" />
             BOM Repository Management
           </h2>
-          <p className="text-sm text-slate-500 font-medium">Excel columns needed: Part_Number, Name, Remarks, F_Code, Ref_des, Logic (Optional).</p>
+          <p className="text-sm text-slate-500 font-medium">Excel columns needed: Part_Number, Name, Remarks, F_Code, Ref_des, Qty, Logic (Optional).</p>
         </div>
         <div className="flex gap-2">
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls,.csv" className="hidden" />
@@ -200,6 +204,7 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, knowledgeBase, onPart
                 <th className="w-1/4 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Name</th>
                 <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Technical Remarks</th>
                 <th className="w-24 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">F Code</th>
+                <th className="w-24 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Qty</th>
                 <th className="w-32 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ref Des</th>
               </tr>
             </thead>
@@ -226,9 +231,11 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, knowledgeBase, onPart
                       part.F_Code === 0 ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 
                       part.F_Code === 1 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
                       part.F_Code === 2 ? 'bg-amber-50 text-amber-700 border-amber-100' :
+                      part.F_Code === 9 ? 'bg-purple-50 text-purple-700 border-purple-100' :
                       'bg-slate-50 text-slate-400 border-slate-200'
                     }`}>CODE {part.F_Code}</span>
                   </td>
+                  <td className="px-6 py-4 text-sm text-center font-bold text-slate-700">{part.Qty}</td>
                   <td className="px-6 py-4 text-sm text-slate-600 font-bold">{part.Ref_des || '-'}</td>
                 </tr>
               ))}

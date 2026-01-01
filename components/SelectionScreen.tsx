@@ -13,7 +13,8 @@ import {
   Sparkles,
   Check,
   SortAsc,
-  Filter
+  Filter,
+  Zap
 } from 'lucide-react';
 
 interface Props {
@@ -29,7 +30,8 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [sortByFCode, setSortByFCode] = useState(false);
 
-  const configParts = useMemo(() => parts.filter(p => p.F_Code === 1 || p.F_Code === 2), [parts]);
+  // Updated to include F_Code 9 (Reference parts that now act as optional selections)
+  const configParts = useMemo(() => parts.filter(p => p.F_Code === 1 || p.F_Code === 2 || p.F_Code === 9), [parts]);
 
   // High Performance Logic Solver
   const logicSelectedIds = useMemo(() => {
@@ -94,11 +96,10 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     const entries = Object.entries(groups);
 
     if (sortByFCode) {
-      // Sort by the primary F_Code found in the group (usually they are the same)
       return entries.sort((a, b) => {
         const fA = a[1][0].F_Code;
         const fB = b[1][0].F_Code;
-        return fB - fA; // Show F2 (Mandatory) first
+        return fB - fA; 
       });
     }
 
@@ -145,11 +146,21 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
     onSelectionChange(next);
   }, [selectedIds, groupedParts, onSelectionChange]);
 
+  const handleProceedWithSuggestion = () => {
+    const combined = new Set([...selectedIds, ...logicSelectedIds]);
+    onSelectionChange(combined);
+    // Use setTimeout to allow the set to propagate to parent state before generating
+    setTimeout(() => {
+      onGenerate();
+    }, 100);
+  };
+
   const getFCodeStyle = (fcode: number) => {
     switch (fcode) {
       case 1: return 'bg-emerald-50 text-emerald-700 border-emerald-100';
       case 2: return 'bg-amber-50 text-amber-700 border-amber-200';
       case 0: return 'bg-indigo-50 text-indigo-700 border-indigo-100';
+      case 9: return 'bg-purple-50 text-purple-700 border-purple-100';
       default: return 'bg-slate-50 text-slate-400 border-slate-200';
     }
   };
@@ -180,9 +191,15 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
           
           <div className="flex items-center gap-3">
             <button 
+              onClick={handleProceedWithSuggestion}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all bg-indigo-50 border border-indigo-200 text-indigo-600 hover:bg-indigo-100"
+            >
+              <Zap size={14} className="fill-indigo-600" /> Proceed with Suggestion
+            </button>
+            <button 
               onClick={() => setSortByFCode(!sortByFCode)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                sortByFCode ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-500'
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                sortByFCode ? 'bg-indigo-50 border-indigo-200 text-indigo-600 shadow-inner' : 'bg-white border-slate-200 text-slate-500 shadow-sm'
               }`}
             >
               <SortAsc size={14} /> Sort by F-Code

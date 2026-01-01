@@ -24,7 +24,8 @@ const ConfigScreen: React.FC<Props> = ({ rules, onRulesUpdate, parts, glossary, 
   const [tempKey, setTempKey] = useState(apiKey);
   const importFileRef = useRef<HTMLInputElement>(null);
 
-  const selectableParts = parts.filter(p => p.F_Code === 1 || p.F_Code === 2);
+  // Updated to include F_Code 9 (Reference materials that now have selection logic)
+  const selectableParts = parts.filter(p => p.F_Code === 1 || p.F_Code === 2 || p.F_Code === 9);
 
   const parseLogicString = (str: string): RuleLogic => {
     const orGroups: string[][] = [];
