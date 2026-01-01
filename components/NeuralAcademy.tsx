@@ -4,7 +4,6 @@ import { GoogleGenAI } from '@google/genai';
 import { MachineKnowledge, LearningEntry, BOMPart, ConfigRule, ConfidenceLevel, TechnicalGlossary } from '../types';
 import { 
   GraduationCap, 
-  Upload, 
   Play, 
   Loader2, 
   FileText, 
@@ -18,7 +17,6 @@ import {
   RefreshCw,
   Plus,
   BookOpenCheck,
-  Layers,
   FileJson,
   Check
 } from 'lucide-react';
@@ -88,21 +86,34 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       const pRemarks = String(p.Remarks || '').toUpperCase();
       const pStd = String(p.Std_Remarks || '').toUpperCase();
       const pRef = String(p.Ref_des || '').toUpperCase();
-      let technicalSource = `${pName} ${pRemarks} ${pStd} ${pRef}`;
+      let techSource = `${pName} ${pRemarks} ${pStd} ${pRef}`;
       
-      // Fix for Error in file components/NeuralAcademy.tsx on line 94: Property 'toUpperCase' does not exist on type 'unknown'.
-      (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
-        if (technicalSource.includes(abbr.toUpperCase())) technicalSource += ` ${full.toUpperCase()}`;
+      const glosEntries = Object.entries(glossary) as [string, string][];
+      glosEntries.forEach(([abbr, full]) => {
+        if (techSource.includes(abbr.toUpperCase())) {
+          techSource += ` ${full.toUpperCase()}`;
+        }
       });
 
       return {
         part: (p.id ? p : { ...p, id: `temp-acad-${Math.random()}`, Part_Number: String(p.Part_Number || '') }) as BOMPart,
-        tokens: new Set(technicalSource.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s))),
+        tokens: new Set(techSource.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s))),
         pn: String(p.Part_Number || '').toUpperCase(),
         ref: pRef
       };
     });
   }, [parts, targetBom, useExistingBOM, glossary]);
+
+  const stats = useMemo(() => {
+    const modelKeys = Object.keys(knowledgeBase);
+    const modelsCount = modelKeys.length;
+    let entriesCount = 0;
+    modelKeys.forEach(k => {
+      const entries = knowledgeBase[k] as LearningEntry[];
+      entriesCount += entries.length;
+    });
+    return { models: modelsCount, entries: entriesCount };
+  }, [knowledgeBase]);
 
   const handleBaselineUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -194,9 +205,10 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           const queryRaw = `${normCat} ${normSel}`;
           
           let queryTokens = queryRaw.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s));
-          // Fix for Error in file components/NeuralAcademy.tsx on line 197: Property 'toUpperCase' does not exist on type 'unknown'.
           (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
-            if (queryRaw.includes(abbr.toUpperCase())) queryTokens.push(...full.toUpperCase().split(' '));
+            if (queryRaw.includes(abbr.toUpperCase())) {
+              queryTokens.push(...full.toUpperCase().split(' '));
+            }
           });
           const queryTokenSet = new Set(queryTokens);
 
@@ -208,12 +220,16 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
             if (queryRaw.includes(ip.pn)) score = 1.1;
             
             if (baselineKnowledge) {
-              // Fix for Error in file components/NeuralAcademy.tsx on line 210: Property 'category'/'selection'/'partNumber' does not exist on type 'unknown'.
               const baselineHits = Object.values(baselineKnowledge).flat() as LearningEntry[];
-              if (baselineHits.find(h => h.category.toUpperCase() === normCat && h.selection.toUpperCase() === normSel && h.partNumber.toUpperCase() === ip.pn)) score = Math.max(score, 1.05);
+              if (baselineHits.find(h => h.category.toUpperCase() === normCat && h.selection.toUpperCase() === normSel && h.partNumber.toUpperCase() === ip.pn)) {
+                score = Math.max(score, 1.05);
+              }
             }
             
-            if ((knowledgeBase[machineModel] || []).some(h => h.category.toUpperCase() === normCat && h.selection.toUpperCase() === normSel && h.partNumber.toUpperCase() === ip.pn)) score = Math.max(score, 1.0);
+            const localHits = (knowledgeBase[machineModel] || []) as LearningEntry[];
+            if (localHits.some(h => h.category.toUpperCase() === normCat && h.selection.toUpperCase() === normSel && h.partNumber.toUpperCase() === ip.pn)) {
+              score = Math.max(score, 1.0);
+            }
             
             let semanticHits = 0;
             queryTokenSet.forEach(t => { if (ip.tokens.has(t)) semanticHits++; });
@@ -266,13 +282,13 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           lastUsed: new Date().toISOString()
         };
         
-        const existingIdx = newKB[modelKey].findIndex(e => e.category === entry.category && e.selection === entry.selection);
+        const existingIdx = (newKB[modelKey] as LearningEntry[]).findIndex(e => e.category === entry.category && e.selection === entry.selection);
         if (existingIdx !== -1) {
-          newKB[modelKey][existingIdx].partNumber = entry.partNumber;
-          newKB[modelKey][existingIdx].confirmedCount++;
-          newKB[modelKey][existingIdx].lastUsed = entry.lastUsed;
+          (newKB[modelKey] as LearningEntry[])[existingIdx].partNumber = entry.partNumber;
+          (newKB[modelKey] as LearningEntry[])[existingIdx].confirmedCount++;
+          (newKB[modelKey] as LearningEntry[])[existingIdx].lastUsed = entry.lastUsed;
         } else {
-          newKB[modelKey].push(entry);
+          (newKB[modelKey] as LearningEntry[]).push(entry);
         }
         count++;
       }
@@ -325,13 +341,6 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
     addLog(`Exported portable weights for [${model}].`, 'info');
   };
 
-  const stats = useMemo(() => {
-    const modelsCount = Object.keys(knowledgeBase).length;
-    // Fix for Error in file components/NeuralAcademy.tsx on line 327: Property 'length' does not exist on type 'unknown'.
-    const entriesCount = Object.values(knowledgeBase).reduce((acc, curr) => acc + (curr as LearningEntry[]).length, 0);
-    return { models: modelsCount, entries: entriesCount };
-  }, [knowledgeBase]);
-
   return (
     <div className="flex flex-col h-full bg-slate-50">
       <div className="p-8 border-b border-slate-200 bg-white shadow-sm flex flex-wrap justify-between items-center gap-8">
@@ -343,7 +352,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
             <h2 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">Neural Academy</h2>
             <div className="flex items-center gap-4 mt-1">
                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                 Active Intelligence Models: {stats.models}
+                 Active Models: {stats.models}
                </span>
                <span className="text-slate-200">|</span>
                <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Learned Nodes: {stats.entries}</span>
@@ -360,15 +369,15 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
         <div className="lg:col-span-4 space-y-6">
           <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 shadow-sm space-y-8">
             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2 border-b pb-4">
-              <Zap size={14} className="text-indigo-500" /> Session Configuration
+              <Zap size={14} className="text-indigo-500" /> Training Session
             </h3>
             
             <div className="space-y-4">
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Machine Profile</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Profile Name</label>
                 <input 
                   type="text" 
-                  placeholder="e.g. PC2000-11 PRODUCTION" 
+                  placeholder="e.g. PC2000-11" 
                   value={machineModel}
                   onChange={e => setMachineModel(e.target.value.toUpperCase())}
                   className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all shadow-inner"
@@ -376,7 +385,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Extraction Pages</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Scan Range (Pages)</label>
                 <input 
                   type="text" 
                   value={pageRange}
@@ -390,18 +399,18 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                 <div onClick={() => baselineInputRef.current?.click()} className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center cursor-pointer ${baselineKnowledge ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'}`}>
                   <input type="file" ref={baselineInputRef} className="hidden" accept=".json" onChange={handleBaselineUpload} />
                   <BookOpenCheck size={20} className={baselineKnowledge ? 'text-indigo-600' : 'text-slate-300'} />
-                  <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{baselineKnowledge ? 'Teacher Active' : 'Load Neural Weights'}</span>
+                  <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{baselineKnowledge ? 'Teacher Active' : 'Load Weights'}</span>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Historical Factory Orders</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">MO Source Documents</label>
                 <div className="relative group">
                   <input type="file" multiple accept="image/*,application/pdf" onChange={(e) => setMoFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
                   <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center group-hover:border-indigo-300 transition-all">
                     <FileText className="text-slate-300 group-hover:text-indigo-500" size={24} />
                     <span className="text-[9px] font-black text-slate-400 mt-2 uppercase">
-                      {moFiles.length > 0 ? `${moFiles.length} Selected` : 'Upload MO Documents'}
+                      {moFiles.length > 0 ? `${moFiles.length} Selected` : 'Upload PDFs/Images'}
                     </span>
                   </div>
                 </div>
@@ -419,11 +428,11 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
               {!useExistingBOM && (
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Target BOM Source</label>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Target BOM Excel</label>
                   <div onClick={() => excelInputRef.current?.click()} className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center cursor-pointer ${targetBom ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'}`}>
                     <input type="file" ref={excelInputRef} className="hidden" onChange={handleExcelUpload} />
                     <Database size={20} className={targetBom ? 'text-emerald-500' : 'text-slate-300'} />
-                    <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{targetBom ? 'Reference Loaded' : 'Upload BOM Excel'}</span>
+                    <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{targetBom ? 'BOM Mapped' : 'Upload Excel'}</span>
                   </div>
                 </div>
               )}
@@ -437,13 +446,13 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
               }`}
             >
               {isTraining ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
-              {isTraining ? 'Scanning Intelligence...' : 'Initialize Training'}
+              {isTraining ? 'Training Engine...' : 'Initialize Academy'}
             </button>
           </div>
 
           <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white h-64 shadow-2xl overflow-hidden flex flex-col">
              <div className="flex justify-between items-center mb-4">
-               <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Live Intelligence Stream</h3>
+               <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Neural Stream</h3>
                <button onClick={() => setTrainingLog([])} className="text-slate-500 hover:text-white transition-colors"><Trash2 size={14} /></button>
              </div>
              <div className="flex-1 overflow-auto font-mono text-[9px] space-y-3 pr-2 custom-scrollbar">
@@ -466,13 +475,13 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
              <div className="bg-white rounded-[2.5rem] border-2 border-indigo-100 p-8 shadow-2xl animate-in slide-in-from-right-4">
                 <div className="flex justify-between items-center mb-8">
                    <div>
-                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Review Extraction Nodes</h3>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Manual overrides persist as Ground Truth in the brain.</p>
+                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Review Neural Proposals</h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Refine and confirm intelligence patterns.</p>
                    </div>
                    <div className="flex gap-4">
                       <button onClick={() => setPendingMatches([])} className="px-6 py-3 bg-slate-50 text-slate-400 text-[10px] font-black uppercase rounded-xl">Discard</button>
                       <button onClick={commitMatches} className="px-8 py-3 bg-indigo-600 text-white hover:bg-indigo-700 text-[10px] font-black uppercase rounded-xl shadow-lg transition-all flex items-center gap-2">
-                         <RefreshCw size={14} /> Commit Patterns
+                         <RefreshCw size={14} /> Commit Nodes
                       </button>
                    </div>
                 </div>
@@ -481,9 +490,9 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                    <table className="w-full text-left">
                       <thead className="bg-slate-50 border-b">
                          <tr>
-                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Order Specification</th>
-                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Neural Part Number Link</th>
-                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase text-center">Action</th>
+                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Configuration</th>
+                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Part Association</th>
+                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase text-center">Rule</th>
                          </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -503,9 +512,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                                           next[idx].manualPartNumber = e.target.value.toUpperCase();
                                           setPendingMatches(next);
                                        }}
-                                       className={`w-full bg-slate-50 border-2 rounded-xl px-4 py-2 text-xs font-mono font-bold outline-none focus:bg-white transition-all ${
-                                          match.status === 'Matched' ? 'border-slate-100 focus:border-indigo-400' : 'border-amber-100 focus:border-amber-400'
-                                       }`}
+                                       className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-2 text-xs font-mono font-bold outline-none focus:bg-white focus:border-indigo-400 transition-all"
                                      />
                                      {match.suggestedPart && (
                                        <span className="text-[9px] font-bold text-slate-400 uppercase truncate max-w-[200px] flex items-center gap-1">
@@ -529,14 +536,14 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
              <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 shadow-sm h-full min-h-[500px]">
                 <div className="flex justify-between items-center mb-10">
                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                     <BrainCircuit size={14} /> Mastered Intelligence Models
+                     <BrainCircuit size={14} /> Mastered Models
                    </h3>
                 </div>
 
                 {stats.models === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-200 opacity-30 py-40">
                      <History size={80} className="mb-6" />
-                     <p className="text-xs font-black uppercase tracking-[0.4em]">Intelligence reservoir empty</p>
+                     <p className="text-xs font-black uppercase tracking-[0.4em]">Brain Reservoir Empty</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -547,19 +554,19 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                                <Database size={20} />
                             </div>
                             <div className="flex gap-2">
-                               <button onClick={() => exportPortableModel(model)} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-indigo-600 transition-all hover:shadow-lg" title="Portable Weights"><FileJson size={16} /></button>
+                               <button onClick={() => exportPortableModel(model)} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-indigo-600 transition-all shadow-sm"><FileJson size={16} /></button>
                                <button onClick={() => {
-                                 const entries = knowledgeBase[model];
+                                 const entries = knowledgeBase[model] as LearningEntry[];
                                  const XLSX = (window as any).XLSX;
                                  if (!XLSX) return;
                                  const ws = XLSX.utils.json_to_sheet(entries);
                                  const wb = XLSX.utils.book_new();
                                  XLSX.utils.book_append_sheet(wb, ws, "Neural Data");
-                                 XLSX.writeFile(wb, `Neural_Weights_${model}.xlsx`);
-                               }} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 transition-all hover:shadow-lg" title="Excel Export"><Download size={16} /></button>
+                                 XLSX.writeFile(wb, `Weights_${model}.xlsx`);
+                               }} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 transition-all shadow-sm"><Download size={16} /></button>
                                <button 
                                  onClick={() => {
-                                   if (confirm(`Wipe memory for model [${model}]?`)) {
+                                   if (confirm(`Wipe memory for [${model}]?`)) {
                                       const next = { ...knowledgeBase };
                                       delete next[model];
                                       onKnowledgeBaseUpdate(next);
@@ -574,10 +581,10 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                          <h4 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">{model}</h4>
                          <div className="flex items-center justify-between mt-8">
                             <div className="flex flex-col">
-                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Mastery</span>
+                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Learned Nodes</span>
                                <span className="text-lg font-black text-indigo-600">{(knowledgeBase[model] as LearningEntry[]).length} Connections</span>
                             </div>
-                            <div className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+                            <div className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-emerald-100">
                                <ShieldCheck size={14} /> Ready
                             </div>
                          </div>
