@@ -13,15 +13,15 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
   const [learned, setLearned] = useState(false);
 
   const finalBOM = useMemo(() => {
-    // Standard parts (F_Code 0) and items confirmed by user/logic
-    const defaultParts = parts.filter(p => p.F_Code === 0);
-    const userSelectedParts = parts.filter(p => selectedIds.has(p.id));
-    return [...defaultParts, ...userSelectedParts]
+    // F_Code 0 are standard. F_Code 1, 2, 9 are optional/mandatory/ref selections.
+    const standardParts = parts.filter(p => p.F_Code === 0);
+    const selectedParts = parts.filter(p => selectedIds.has(p.id));
+    return [...standardParts, ...selectedParts]
       .sort((a, b) => (a.Select_pref || 0) - (b.Select_pref || 0));
   }, [parts, selectedIds]);
 
-  const handleFinalize = () => {
-    const confirmedMappings = parts
+  const handleFinalizeAndExport = () => {
+    const mappings = parts
       .filter(p => selectedIds.has(p.id) && (p.F_Code === 1 || p.F_Code === 2 || p.F_Code === 9))
       .map(p => ({
         category: p.Ref_des || 'Unknown',
@@ -29,26 +29,27 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
         partNumber: p.Part_Number
       }));
 
-    onFinalizeKnowledge(confirmedMappings);
+    onFinalizeKnowledge(mappings);
     setLearned(true);
     
-    // Prepare Excel export matching the new column structure
+    // Excel columns: Sr. No; Part_Number; Name; Qty; Ref_des; Remarks; Status
     const exportData = finalBOM.map((p, index) => ({
       "Sr. No": index + 1,
       "Part_Number": p.Part_Number,
       "Name": p.Name,
-      "Qty": p.Qty,
+      "Qty": p.Qty || 1,
       "Ref_des": p.Ref_des,
       "Remarks": p.Remarks,
       "Status": 'VERIFIED'
     }));
 
     const XLSX = (window as any).XLSX;
-    if (!XLSX) return;
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Final Manifest");
-    XLSX.writeFile(wb, `${modelName}_Manifest_BOM.xlsx`);
+    if (XLSX) {
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "BOM Manifest");
+      XLSX.writeFile(wb, `${modelName}_Manifest.xlsx`);
+    }
   };
 
   return (
@@ -56,16 +57,18 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
       <div className="p-8 border-b border-slate-200 bg-white flex justify-between items-center shadow-sm">
         <div>
           <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3 uppercase tracking-tight">
-            <ShieldCheck className="text-emerald-600" /> Output Manifest
+            <ShieldCheck className="text-emerald-600" /> Confirmed Output Manifest
           </h2>
-          <p className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-widest">Target Configuration: <span className="text-indigo-600">{modelName}</span></p>
+          <p className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-widest">
+            Configuration: <span className="text-indigo-600">{modelName}</span>
+          </p>
         </div>
         <div className="flex gap-3">
           <button onClick={() => window.print()} className="bg-slate-50 text-slate-600 px-6 py-3 rounded-2xl flex items-center gap-2 text-xs font-black uppercase tracking-widest border border-slate-200 hover:bg-slate-100 transition-colors">
-            <Printer size={16} /> Print Document
+            <Printer size={16} /> Print
           </button>
           <button 
-            onClick={handleFinalize}
+            onClick={handleFinalizeAndExport}
             className={`px-8 py-3 rounded-2xl flex items-center gap-3 text-xs font-black uppercase tracking-widest transition-all shadow-xl ${
               learned ? 'bg-emerald-500 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-200'
             }`}
@@ -82,12 +85,12 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
              <div className="flex items-center gap-4">
                 <FileText size={32} className="text-indigo-400" />
                 <div>
-                  <h3 className="text-lg font-black uppercase tracking-tighter">Verified Build BOM</h3>
+                  <h3 className="text-lg font-black uppercase tracking-tighter">Verified Build Manifest</h3>
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">Authorized Assembly Reference</p>
                 </div>
              </div>
              <div className="text-right">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Components</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Components</p>
                 <p className="text-4xl font-black text-emerald-400">{finalBOM.length}</p>
              </div>
           </div>
@@ -106,28 +109,25 @@ const BOMGenerated: React.FC<Props> = ({ parts, selectedIds, modelName, onFinali
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {finalBOM.map((p, index) => {
-                  const srNo = index + 1;
-                  return (
-                    <tr key={p.id} className="hover:bg-slate-50/50 transition-colors group">
-                      <td className="px-6 py-5 text-[10px] font-black text-slate-400">{srNo}</td>
-                      <td className="px-6 py-5 text-sm font-mono font-bold text-indigo-600">{p.Part_Number}</td>
-                      <td className="px-6 py-5 text-sm font-black text-slate-800 uppercase tracking-tight">{p.Name}</td>
-                      <td className="px-6 py-5 text-sm text-center font-bold text-slate-600">{p.Qty}</td>
-                      <td className="px-6 py-5">
-                        <span className="text-[10px] font-black text-slate-500 uppercase">{p.Ref_des || '-'}</span>
-                      </td>
-                      <td className="px-6 py-5">
-                        <p className="text-[10px] text-slate-400 font-medium leading-relaxed italic line-clamp-2">{p.Remarks || '-'}</p>
-                      </td>
-                      <td className="px-6 py-5 text-center">
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full text-[9px] font-black uppercase">
-                          <UserCheck size={10} /> Verified
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {finalBOM.map((p, index) => (
+                  <tr key={p.id} className="hover:bg-slate-50/50 transition-colors group">
+                    <td className="px-6 py-5 text-[10px] font-black text-slate-400">{index + 1}</td>
+                    <td className="px-6 py-5 text-sm font-mono font-bold text-indigo-600">{p.Part_Number}</td>
+                    <td className="px-6 py-5 text-sm font-black text-slate-800 uppercase tracking-tight">{p.Name}</td>
+                    <td className="px-6 py-5 text-sm text-center font-bold text-slate-600">{p.Qty || 1}</td>
+                    <td className="px-6 py-5">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-tight">{p.Ref_des || '-'}</span>
+                    </td>
+                    <td className="px-6 py-5">
+                      <p className="text-[10px] text-slate-400 font-medium leading-relaxed italic line-clamp-2">{p.Remarks || '-'}</p>
+                    </td>
+                    <td className="px-6 py-5 text-center">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full text-[9px] font-black uppercase">
+                        <UserCheck size={10} /> Verified
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

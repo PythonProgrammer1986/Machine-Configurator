@@ -25,7 +25,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [sortByFCode, setSortByFCode] = useState(false);
 
-  // F_Code 9 is now explicitly treated as a configuration part
+  // F_Code 9 is now explicitly treated as a configuration part (selectable)
   const configParts = useMemo(() => parts.filter(p => p.F_Code === 1 || p.F_Code === 2 || p.F_Code === 9), [parts]);
 
   const logicSelectedIds = useMemo(() => {
@@ -106,25 +106,20 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
 
   const validation = useMemo(() => {
     let missingF2 = 0;
-    let pendingConfirmation = 0;
     let totalF2Groups = 0;
 
     groupedParts.forEach(([_, items]) => {
       const isF2 = items.some(p => p.F_Code === 2);
       if (isF2) totalF2Groups++;
-
       const hasUser = items.some(p => selectedIds.has(p.id));
-      const hasLogic = items.some(p => logicSelectedIds.has(p.id));
-
       if (isF2 && !hasUser) missingF2++;
-      if (hasLogic && !hasUser) pendingConfirmation++;
     });
 
     const progress = totalF2Groups > 0 ? Math.round(((totalF2Groups - missingF2) / totalF2Groups) * 100) : 100;
-    const isValid = missingF2 === 0; // Simplified for "Proceed with Suggestion" context
+    const isValid = missingF2 === 0;
 
-    return { isValid, progress, pendingConfirmation };
-  }, [groupedParts, selectedIds, logicSelectedIds]);
+    return { isValid, progress };
+  }, [groupedParts, selectedIds]);
 
   const toggleSelection = useCallback((part: BOMPart) => {
     const next = new Set(selectedIds);
@@ -132,7 +127,8 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
       next.delete(part.id);
     } else {
       if (part.F_Code === 2) {
-        const group = groupedParts.find(([k]) => k === part.Ref_des)?.[1] || [];
+        const groupKey = part.Ref_des || 'General';
+        const group = groupedParts.find(([k]) => k === groupKey)?.[1] || [];
         group.forEach(p => next.delete(p.id));
       }
       next.add(part.id);
@@ -141,12 +137,12 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
   }, [selectedIds, groupedParts, onSelectionChange]);
 
   const handleProceedWithSuggestion = () => {
-    // Automatically accept everything recommended by logic
-    const merged = new Set(selectedIds);
-    logicSelectedIds.forEach(id => merged.add(id));
-    onSelectionChange(merged);
+    // Automatically merge system suggestions into final selection
+    const finalSet = new Set(selectedIds);
+    logicSelectedIds.forEach(id => finalSet.add(id));
+    onSelectionChange(finalSet);
     
-    // Defer navigation slightly to ensure state is committed
+    // Defer for state sync
     setTimeout(() => {
       onGenerate();
     }, 50);
@@ -181,7 +177,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
                 ></div>
               </div>
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                {validation.progress}% Mandatory Choices Made
+                {validation.progress}% Validated
               </span>
             </div>
           </div>
@@ -189,23 +185,23 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
           <div className="flex items-center gap-3">
             <button 
               onClick={handleProceedWithSuggestion}
-              className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg"
+              className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg active:scale-95"
             >
               <Zap size={14} className="fill-white" /> Proceed with Suggestion
             </button>
             <button 
               onClick={() => setSortByFCode(!sortByFCode)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                sortByFCode ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-500'
+                sortByFCode ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-500 shadow-sm'
               }`}
             >
-              <SortAsc size={14} /> Sort by F-Code
+              <SortAsc size={14} /> Sort F-Code
             </button>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
               <input 
                 type="text" 
-                placeholder="Find components..." 
+                placeholder="Search..." 
                 value={searchTerm} 
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:border-indigo-500 focus:bg-white outline-none w-48 lg:w-64 transition-all"
@@ -230,7 +226,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
         {groupedParts.length === 0 ? (
           <div className="h-96 flex flex-col items-center justify-center text-slate-300">
              <Search size={48} className="opacity-20 mb-4" />
-             <p className="text-xs font-black uppercase tracking-widest">No matching items found</p>
+             <p className="text-xs font-black uppercase tracking-widest">No matching items</p>
           </div>
         ) : groupedParts.map(([group, items]) => {
           const isExpanded = expandedGroups.has(group) || searchTerm.length > 0;
@@ -273,7 +269,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
               </button>
 
               {isExpanded && (
-                <div className="p-8 pt-0 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-top-1 duration-200">
+                <div className="p-8 pt-0 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-top-1">
                   {items.map(part => {
                     const isSelected = selectedIds.has(part.id);
                     const isRecommended = logicSelectedIds.has(part.id);

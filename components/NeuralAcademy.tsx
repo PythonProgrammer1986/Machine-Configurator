@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { MachineKnowledge, LearningEntry, BOMPart, ConfigRule, ConfidenceLevel, TechnicalGlossary } from '../types';
@@ -105,13 +106,12 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
   const stats = useMemo(() => {
     const modelKeys = Object.keys(knowledgeBase);
-    const modelsCount = modelKeys.length;
     let entriesCount = 0;
     modelKeys.forEach(k => {
       const entries = (knowledgeBase[k] as LearningEntry[]) || [];
       entriesCount += entries.length;
     });
-    return { models: modelsCount, entries: entriesCount };
+    return { models: modelKeys.length, entries: entriesCount };
   }, [knowledgeBase]);
 
   const handleBaselineUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -143,7 +143,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
         const ws = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws) as ExcelRow[];
         setTargetBom(data);
-        addLog(`Technical Reference [${data.length} items] mapped.`, 'success');
+        addLog(`Technical Reference mapped.`, 'success');
       } catch (err) {
         addLog(`Excel load failed.`, 'error');
       }
@@ -156,33 +156,28 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
     const groundTruth = useExistingBOM ? parts : targetBom;
 
     if (!effectiveApiKey || moFiles.length === 0 || !groundTruth || !machineModel) {
-      alert("Missing configuration: Model Name, MO Files, and Reference BOM are required.");
+      alert("Missing configuration.");
       return;
     }
 
     setIsTraining(true);
     setTrainingLog([]);
     setPendingMatches([]);
-    addLog(`Neural Engine Initiated: Profile [${machineModel}]`, 'info');
+    addLog(`Neural Engine Initiated: [${machineModel}]`, 'info');
 
     try {
       const ai = new GoogleGenAI({ apiKey: effectiveApiKey });
       const currentMatches: ExtractionMatch[] = [];
 
       for (const file of moFiles) {
-        addLog(`Scanning document: ${file.name}...`, 'info');
+        addLog(`Scanning: ${file.name}...`, 'info');
         const base64 = await new Promise<string>((res) => {
           const r = new FileReader();
           r.onload = () => res((r.result as string).split(',')[1] || '');
           r.readAsDataURL(file);
         });
 
-        const prompt = `
-          ACT AS A SENIOR CONFIGURATION ENGINEER.
-          STRICTLY SCAN PAGES: ${pageRange}. 
-          EXTRACT ALL CONFIGURATION OPTIONS.
-          JSON SCHEMA: {"options": [{"category": "string", "selection": "string"}]}
-        `;
+        const prompt = `ACT AS SENIOR CONFIGURATION ENGINEER. SCAN PAGES: ${pageRange}. EXTRACT OPTIONS. JSON SCHEMA: {"options": [{"category": "string", "selection": "string"}]}`;
 
         const response = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
@@ -196,21 +191,13 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
         });
 
         const extracted = JSON.parse(response.text || '{"options": []}');
-        const options = extracted.options || [];
+        const options = (extracted.options || []) as {category: string, selection: string}[];
         
-        options.forEach((opt: any, idx: number) => {
-          const normCat = String(opt.category || 'GENERAL').trim().toUpperCase();
-          const normSel = String(opt.selection || 'UNDEFINED').trim().toUpperCase();
+        options.forEach((opt, idx) => {
+          const normCat = String(opt.category).toUpperCase();
+          const normSel = String(opt.selection).toUpperCase();
           const queryRaw = `${normCat} ${normSel}`;
           
-          let queryTokens = queryRaw.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s));
-          (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
-            if (queryRaw.includes(abbr.toUpperCase())) {
-              queryTokens.push(...full.toUpperCase().split(' '));
-            }
-          });
-          const queryTokenSet = new Set(queryTokens);
-
           let bestMatchPart: BOMPart | undefined;
           let topScore = 0;
 
@@ -219,8 +206,8 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
             if (queryRaw.includes(ip.pn)) score = 1.1;
             
             if (baselineKnowledge) {
-              const baselineHits = Object.values(baselineKnowledge).flat() as LearningEntry[];
-              if (baselineHits.find(h => h.category.toUpperCase() === normCat && h.selection.toUpperCase() === normSel && h.partNumber.toUpperCase() === ip.pn)) {
+              const bHits = Object.values(baselineKnowledge).flat() as LearningEntry[];
+              if (bHits.find(h => h.category.toUpperCase() === normCat && h.selection.toUpperCase() === normSel && h.partNumber.toUpperCase() === ip.pn)) {
                 score = Math.max(score, 1.05);
               }
             }
@@ -230,11 +217,6 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
               score = Math.max(score, 1.0);
             }
             
-            let semanticHits = 0;
-            queryTokenSet.forEach(t => { if (ip.tokens.has(t)) semanticHits++; });
-            const semanticScore = queryTokenSet.size > 0 ? (semanticHits / queryTokenSet.size) * 0.7 : 0;
-            score = Math.max(score, semanticScore);
-
             if (score > topScore) { 
               topScore = score; 
               bestMatchPart = ip.part; 
@@ -242,23 +224,23 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           });
 
           currentMatches.push({
-            id: `acad-match-${file.name}-${idx}-${Math.random()}`,
+            id: `acad-match-${file.name}-${idx}`,
             category: normCat,
             selection: normSel,
             suggestedPart: bestMatchPart,
             manualPartNumber: bestMatchPart?.Part_Number || '',
             status: bestMatchPart ? 'Matched' : 'Unmatched',
-            confidence: Math.min(topScore, 1.0),
-            level: topScore >= 0.9 ? ConfidenceLevel.AUTO_VERIFIED : (topScore >= 0.5 ? ConfidenceLevel.REVIEW_NEEDED : ConfidenceLevel.UNCERTAIN),
+            confidence: topScore,
+            level: topScore >= 0.9 ? ConfidenceLevel.AUTO_VERIFIED : ConfidenceLevel.REVIEW_NEEDED,
             source: topScore >= 1.0 ? 'Learned' : 'AI'
           });
         });
       }
 
       setPendingMatches(currentMatches.sort((a, b) => b.confidence - a.confidence));
-      addLog(`Academy Extraction Finished. ${currentMatches.length} patterns identified.`, 'success');
+      addLog(`Academy Extraction Finished.`, 'success');
     } catch (err: any) {
-      addLog(`Training Error: ${err.message || 'Unknown failure'}`, 'error');
+      addLog(`Training Error: ${err.message}`, 'error');
     } finally {
       setIsTraining(false);
     }
@@ -266,100 +248,102 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
   const commitMatches = () => {
     const newKB = { ...knowledgeBase };
-    const modelKey = machineModel.trim().toUpperCase();
+    const modelKey = machineModel.toUpperCase();
     if (!newKB[modelKey]) newKB[modelKey] = [];
 
-    let count = 0;
     pendingMatches.forEach(m => {
       const finalPN = (m.manualPartNumber || m.suggestedPart?.Part_Number || '').trim().toUpperCase();
       if (finalPN) {
         const entry: LearningEntry = {
-          category: m.category.trim().toUpperCase(),
-          selection: m.selection.trim().toUpperCase(),
+          category: m.category,
+          selection: m.selection,
           partNumber: finalPN,
           confirmedCount: 1,
           lastUsed: new Date().toISOString()
         };
-        
-        const existingIdx = (newKB[modelKey] as LearningEntry[]).findIndex(e => e.category === entry.category && e.selection === entry.selection);
-        if (existingIdx !== -1) {
-          (newKB[modelKey] as LearningEntry[])[existingIdx].partNumber = entry.partNumber;
-          (newKB[modelKey] as LearningEntry[])[existingIdx].confirmedCount++;
-          (newKB[modelKey] as LearningEntry[])[existingIdx].lastUsed = entry.lastUsed;
+        const modelEntries = newKB[modelKey] as LearningEntry[];
+        const idx = modelEntries.findIndex(e => e.category === entry.category && e.selection === entry.selection);
+        if (idx !== -1) {
+          modelEntries[idx].partNumber = entry.partNumber;
+          modelEntries[idx].confirmedCount++;
         } else {
-          (newKB[modelKey] as LearningEntry[]).push(entry);
+          modelEntries.push(entry);
         }
-        count++;
       }
     });
 
     onKnowledgeBaseUpdate(newKB);
     setPendingMatches([]);
-    addLog(`Intelligence Committed: ${count} nodes synced to [${modelKey}].`, 'success');
+    addLog(`Patterns Committed to ${modelKey}.`, 'success');
   };
 
+  /**
+   * Promotes an intelligence match to a permanent engineering dependency rule.
+   */
   const promoteToRule = (match: ExtractionMatch) => {
-    const finalPN = (match.manualPartNumber || match.suggestedPart?.Part_Number || '').trim().toUpperCase();
-    if (!finalPN) return;
-
-    const part = parts.find(p => p.Part_Number.toUpperCase() === finalPN);
+    const pn = (match.manualPartNumber || match.suggestedPart?.Part_Number || '').trim().toUpperCase();
+    const part = parts.find(p => p.Part_Number.toUpperCase() === pn);
+    
     if (!part) {
-      alert("Part number not found in main database. Manual creation required.");
+      addLog(`SKU ${pn} not found in repository.`, 'error');
       return;
     }
 
+    const keywords = `${match.category} ${match.selection}`.toUpperCase();
     const newRule: ConfigRule = {
       id: `rule-acad-${Date.now()}`,
       targetPartId: part.id,
       logic: {
-        includes: [match.category.toUpperCase(), match.selection.toUpperCase()],
+        includes: keywords.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s)),
         excludes: [],
         orGroups: [],
-        raw: `${match.category} ${match.selection}`.toUpperCase()
+        raw: keywords
       },
       isActive: true
     };
-    onRulesUpdate([...rules.filter(r => r.targetPartId !== part.id), newRule]);
-    addLog(`Rule Promotion: Permanent dependency logic saved for ${finalPN}.`, 'success');
+
+    onRulesUpdate([...rules, newRule]);
+    addLog(`Intelligence promoted to logic: ${pn}`, 'success');
   };
 
+  /**
+   * Exports a portable model file containing specific neural weights.
+   */
   const exportPortableModel = (model: string) => {
-    const data: NeuralWeights = {
+    const exportData: NeuralWeights = {
       modelName: model,
       knowledgeBase: { [model]: knowledgeBase[model] },
       timestamp: new Date().toISOString(),
       type: "NEURAL_WEIGHTS"
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Neural_Weights_${model}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    addLog(`Exported portable weights for [${model}].`, 'info');
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `Weights_${model}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+    addLog(`Weights exported for ${model}`, 'info');
   };
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      <div className="p-8 border-b border-slate-200 bg-white shadow-sm flex flex-wrap justify-between items-center gap-8">
+      <div className="p-8 border-b border-slate-200 bg-white flex flex-wrap justify-between items-center gap-8 shadow-sm">
         <div className="flex items-center gap-6">
-          <div className="p-4 bg-indigo-600 text-white rounded-[1.5rem] shadow-xl shadow-indigo-200">
+          <div className="p-4 bg-indigo-600 text-white rounded-[1.5rem] shadow-xl">
             <GraduationCap size={32} />
           </div>
           <div>
             <h2 className="text-3xl font-black text-slate-800 tracking-tighter uppercase">Neural Academy</h2>
             <div className="flex items-center gap-4 mt-1">
-               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                 Active Models: {stats.models}
-               </span>
+               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Models: {stats.models}</span>
                <span className="text-slate-200">|</span>
                <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Learned Nodes: {stats.entries}</span>
             </div>
           </div>
         </div>
         <div className="text-right">
-          <p className="text-[10px] font-black text-slate-400 uppercase">Knowledge Density</p>
+          <p className="text-[10px] font-black text-slate-400 uppercase">Mastery Index</p>
           <p className="text-2xl font-black text-indigo-600">{(stats.entries / (parts.length || 1) * 100).toFixed(1)}%</p>
         </div>
       </div>
@@ -367,72 +351,49 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       <div className="flex-1 overflow-auto p-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-4 space-y-6">
           <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 shadow-sm space-y-8">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2 border-b pb-4">
-              <Zap size={14} className="text-indigo-500" /> Training Session
+            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+              <Zap size={14} className="text-indigo-500" /> Training Hub
             </h3>
             
             <div className="space-y-4">
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Profile Name</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Profile Name</label>
                 <input 
                   type="text" 
-                  placeholder="e.g. PC2000-11" 
+                  placeholder="PC2000-11" 
                   value={machineModel}
                   onChange={e => setMachineModel(e.target.value.toUpperCase())}
-                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all shadow-inner"
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500 transition-all"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Scan Range (Pages)</label>
-                <input 
-                  type="text" 
-                  value={pageRange}
-                  onChange={e => setPageRange(e.target.value)}
-                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-bold outline-none focus:border-indigo-500 transition-all shadow-inner"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Baseline Weights</label>
-                <div onClick={() => baselineInputRef.current?.click()} className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center cursor-pointer ${baselineKnowledge ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'}`}>
-                  <input type="file" ref={baselineInputRef} className="hidden" accept=".json" onChange={handleBaselineUpload} />
-                  <BookOpenCheck size={20} className={baselineKnowledge ? 'text-indigo-600' : 'text-slate-300'} />
-                  <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{baselineKnowledge ? 'Teacher Active' : 'Load Weights'}</span>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">MO Source Documents</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Scan Documents</label>
                 <div className="relative group">
                   <input type="file" multiple accept="image/*,application/pdf" onChange={(e) => setMoFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
                   <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center group-hover:border-indigo-300 transition-all">
-                    <FileText className="text-slate-300 group-hover:text-indigo-500" size={24} />
-                    <span className="text-[9px] font-black text-slate-400 mt-2 uppercase">
-                      {moFiles.length > 0 ? `${moFiles.length} Selected` : 'Upload PDFs/Images'}
-                    </span>
+                    <FileText className="text-slate-300" size={24} />
+                    <span className="text-[9px] font-black text-slate-400 mt-2 uppercase">{moFiles.length > 0 ? `${moFiles.length} Selected` : 'Upload Spec'}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                 <div>
-                    <p className="text-[10px] font-black text-slate-800 uppercase tracking-tight">Sync With Live DB</p>
-                    <p className="text-[8px] font-bold text-slate-400 uppercase">Cross-ref against repository</p>
-                 </div>
-                 <button onClick={() => setUseExistingBOM(!useExistingBOM)} className={`w-12 h-6 rounded-full transition-all relative ${useExistingBOM ? 'bg-indigo-600' : 'bg-slate-300'}`}>
-                   <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${useExistingBOM ? 'left-7' : 'left-1'}`}></div>
+              <div className="space-y-1">
+                 <button onClick={() => setUseExistingBOM(!useExistingBOM)} className="flex items-center gap-3 text-[10px] font-black uppercase text-slate-500 hover:text-indigo-600 transition-colors">
+                   <div className={`w-8 h-4 rounded-full relative transition-all ${useExistingBOM ? 'bg-indigo-600' : 'bg-slate-300'}`}>
+                     <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${useExistingBOM ? 'left-4.5' : 'left-0.5'}`} />
+                   </div>
+                   Sync With Repository
                  </button>
               </div>
 
               {!useExistingBOM && (
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Target BOM Excel</label>
-                  <div onClick={() => excelInputRef.current?.click()} className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center cursor-pointer ${targetBom ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'}`}>
-                    <input type="file" ref={excelInputRef} className="hidden" onChange={handleExcelUpload} />
-                    <Database size={20} className={targetBom ? 'text-emerald-500' : 'text-slate-300'} />
-                    <span className="text-[9px] font-black mt-2 text-slate-400 uppercase">{targetBom ? 'BOM Mapped' : 'Upload Excel'}</span>
-                  </div>
+                <div className="space-y-1" onClick={() => excelInputRef.current?.click()}>
+                   <input type="file" ref={excelInputRef} className="hidden" onChange={handleExcelUpload} />
+                   <div className={`border-2 border-dashed rounded-2xl p-4 flex flex-col items-center cursor-pointer ${targetBom ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+                      <Database size={16} className={targetBom ? 'text-emerald-500' : 'text-slate-300'} />
+                      <span className="text-[9px] font-black uppercase mt-1 text-slate-400">{targetBom ? 'BOM Linked' : 'Load Target BOM'}</span>
+                   </div>
                 </div>
               )}
             </div>
@@ -440,28 +401,22 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
             <button 
               onClick={startTraining}
               disabled={isTraining}
-              className={`w-full py-5 rounded-2xl flex items-center justify-center gap-3 text-xs font-black uppercase tracking-[0.2em] transition-all shadow-xl ${
-                isTraining ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-200'
-              }`}
+              className={`w-full py-5 rounded-2xl flex items-center justify-center gap-3 text-xs font-black uppercase tracking-[0.2em] transition-all shadow-xl ${isTraining ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
             >
               {isTraining ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
-              {isTraining ? 'Training Engine...' : 'Initialize Academy'}
+              {isTraining ? 'Scanning...' : 'Initialize Academy'}
             </button>
           </div>
 
-          <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white h-64 shadow-2xl overflow-hidden flex flex-col">
-             <div className="flex justify-between items-center mb-4">
-               <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Neural Stream</h3>
-               <button onClick={() => setTrainingLog([])} className="text-slate-500 hover:text-white transition-colors"><Trash2 size={14} /></button>
+          <div className="bg-slate-900 rounded-[2.5rem] p-6 text-white h-64 shadow-2xl flex flex-col">
+             <div className="flex justify-between items-center mb-3">
+               <h3 className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Intelligence Log</h3>
+               <button onClick={() => setTrainingLog([])} className="text-slate-600 hover:text-white"><Trash2 size={12} /></button>
              </div>
-             <div className="flex-1 overflow-auto font-mono text-[9px] space-y-3 pr-2 custom-scrollbar">
-                {trainingLog.length === 0 ? (
-                  <p className="text-slate-600 italic">SYSTEM IDLE</p>
-                ) : trainingLog.map((log, i) => (
-                  <div key={i} className={`flex gap-3 leading-relaxed ${
-                    log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : log.type === 'warn' ? 'text-amber-400' : 'text-slate-300'
-                  }`}>
-                    <span className="opacity-40">>></span>
+             <div className="flex-1 overflow-auto font-mono text-[9px] space-y-2 pr-2 custom-scrollbar">
+                {trainingLog.map((log, i) => (
+                  <div key={i} className={`flex gap-2 leading-tight ${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : 'text-slate-300'}`}>
+                    <span>>></span>
                     <span>{log.msg}</span>
                   </div>
                 ))}
@@ -469,18 +424,15 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           </div>
         </div>
 
-        <div className="lg:col-span-8 space-y-8">
+        <div className="lg:col-span-8">
            {pendingMatches.length > 0 ? (
-             <div className="bg-white rounded-[2.5rem] border-2 border-indigo-100 p-8 shadow-2xl animate-in slide-in-from-right-4">
+             <div className="bg-white rounded-[2.5rem] border-2 border-indigo-100 p-8 shadow-2xl">
                 <div className="flex justify-between items-center mb-8">
-                   <div>
-                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Review Neural Proposals</h3>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">Refine and confirm intelligence patterns.</p>
-                   </div>
-                   <div className="flex gap-4">
-                      <button onClick={() => setPendingMatches([])} className="px-6 py-3 bg-slate-50 text-slate-400 text-[10px] font-black uppercase rounded-xl">Discard</button>
-                      <button onClick={commitMatches} className="px-8 py-3 bg-indigo-600 text-white hover:bg-indigo-700 text-[10px] font-black uppercase rounded-xl shadow-lg transition-all flex items-center gap-2">
-                         <RefreshCw size={14} /> Commit Nodes
+                   <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Validation Deck</h3>
+                   <div className="flex gap-3">
+                      <button onClick={() => setPendingMatches([])} className="px-5 py-2.5 bg-slate-50 text-slate-400 text-[10px] font-black uppercase rounded-xl">Discard</button>
+                      <button onClick={commitMatches} className="px-7 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 text-[10px] font-black uppercase rounded-xl shadow-lg flex items-center gap-2">
+                         <RefreshCw size={12} /> Commit Nodes
                       </button>
                    </div>
                 </div>
@@ -490,41 +442,34 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                       <thead className="bg-slate-50 border-b">
                          <tr>
                             <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Configuration</th>
-                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Part Association</th>
-                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase text-center">Rule</th>
+                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase">Neural Link</th>
+                            <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase text-center">Action</th>
                          </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                          {pendingMatches.map((match) => (
-                            <tr key={match.id} className="hover:bg-slate-50/50 group">
+                            <tr key={match.id} className="hover:bg-slate-50/50">
                                <td className="px-6 py-4">
-                                  <p className="text-[10px] font-black text-indigo-600 uppercase mb-0.5">{match.category}</p>
+                                  <p className="text-[10px] font-black text-indigo-600 uppercase">{match.category}</p>
                                   <p className="text-xs font-bold text-slate-800">{match.selection}</p>
                                </td>
                                <td className="px-6 py-4">
-                                  <div className="flex flex-col gap-2">
-                                     <input 
-                                       type="text" 
-                                       value={match.manualPartNumber} 
-                                       onChange={(e) => {
-                                          const next = [...pendingMatches];
-                                          const idx = next.findIndex(m => m.id === match.id);
-                                          if (idx !== -1) {
-                                            next[idx].manualPartNumber = e.target.value.toUpperCase();
-                                            setPendingMatches(next);
-                                          }
-                                       }}
-                                       className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-2 text-xs font-mono font-bold outline-none focus:bg-white focus:border-indigo-400 transition-all"
-                                     />
-                                     {match.suggestedPart && (
-                                       <span className="text-[9px] font-bold text-slate-400 uppercase truncate max-w-[200px] flex items-center gap-1">
-                                          <Check size={10} className="text-emerald-500" /> {match.suggestedPart.Name}
-                                       </span>
-                                     )}
-                                  </div>
+                                  <input 
+                                    type="text" 
+                                    value={match.manualPartNumber} 
+                                    onChange={(e) => {
+                                       const next = [...pendingMatches];
+                                       const idx = next.findIndex(m => m.id === match.id);
+                                       if (idx !== -1) {
+                                         next[idx].manualPartNumber = e.target.value.toUpperCase();
+                                         setPendingMatches(next);
+                                       }
+                                    }}
+                                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-2 text-xs font-mono font-bold outline-none focus:border-indigo-400"
+                                  />
                                </td>
                                <td className="px-6 py-4 text-center">
-                                  <button onClick={() => promoteToRule(match)} className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-indigo-600 hover:text-white transition-all">
+                                  <button onClick={() => promoteToRule(match)} className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-indigo-600 hover:text-white transition-colors">
                                      <Plus size={16} />
                                   </button>
                                </td>
@@ -536,65 +481,46 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
              </div>
            ) : (
              <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 shadow-sm h-full min-h-[500px]">
-                <div className="flex justify-between items-center mb-10">
-                   <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                     <BrainCircuit size={14} /> Mastered Models
-                   </h3>
-                </div>
+                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-8">
+                  <BrainCircuit size={14} /> Mastered Models Repository
+                </h3>
 
                 {stats.models === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-200 opacity-30 py-40">
-                     <History size={80} className="mb-6" />
-                     <p className="text-xs font-black uppercase tracking-[0.4em]">Brain Reservoir Empty</p>
+                  <div className="h-full flex flex-col items-center justify-center text-slate-200 py-32">
+                     <History size={64} className="opacity-20 mb-4" />
+                     <p className="text-xs font-black uppercase tracking-widest">Neural Reservoir Empty</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {Object.keys(knowledgeBase).map(model => {
-                      const entryCount = (knowledgeBase[model] as LearningEntry[] || []).length;
-                      return (
-                        <div key={model} className="bg-slate-50 rounded-[2rem] p-8 border border-slate-100 hover:border-indigo-300 transition-all group">
-                          <div className="flex justify-between items-start mb-6">
-                              <div className="p-3 bg-white rounded-2xl shadow-sm text-indigo-600 border border-slate-100">
-                                <Database size={20} />
-                              </div>
-                              <div className="flex gap-2">
-                                <button onClick={() => exportPortableModel(model)} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-indigo-600 transition-all shadow-sm"><FileJson size={16} /></button>
-                                <button onClick={() => {
-                                  const entries = (knowledgeBase[model] as LearningEntry[]) || [];
-                                  const XLSX = (window as any).XLSX;
-                                  if (!XLSX) return;
-                                  const ws = XLSX.utils.json_to_sheet(entries);
-                                  const wb = XLSX.utils.book_new();
-                                  XLSX.utils.book_append_sheet(wb, ws, "Neural Data");
-                                  XLSX.writeFile(wb, `Weights_${model}.xlsx`);
-                                }} className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-emerald-600 transition-all shadow-sm"><Download size={16} /></button>
-                                <button 
-                                  onClick={() => {
-                                    if (confirm(`Wipe memory for [${model}]?`)) {
-                                        const next = { ...knowledgeBase };
-                                        delete next[model];
-                                        onKnowledgeBaseUpdate(next);
-                                    }
-                                  }}
-                                  className="p-3 bg-white rounded-xl border border-slate-100 text-slate-400 hover:text-red-500 transition-all"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                          </div>
-                          <h4 className="text-xl font-black text-slate-800 uppercase tracking-tighter mb-2">{model}</h4>
-                          <div className="flex items-center justify-between mt-8">
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Learned Nodes</span>
-                                <span className="text-lg font-black text-indigo-600">{entryCount} Connections</span>
-                              </div>
-                              <div className="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1.5">
-                                <ShieldCheck size={14} /> Ready
-                              </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {Object.keys(knowledgeBase).map(model => (
+                      <div key={model} className="bg-slate-50 rounded-[2rem] p-6 border border-slate-100 hover:border-indigo-300 transition-all">
+                         <div className="flex justify-between items-start mb-6">
+                            <div className="p-3 bg-white rounded-xl shadow-sm text-indigo-600 border border-slate-100"><Database size={20} /></div>
+                            <div className="flex gap-2">
+                               <button onClick={() => exportPortableModel(model)} className="p-2 bg-white rounded-lg text-slate-400 hover:text-indigo-600"><FileJson size={14} /></button>
+                               <button 
+                                 onClick={() => {
+                                   if (confirm(`Wipe memory for [${model}]?`)) {
+                                       const next = { ...knowledgeBase };
+                                       delete next[model];
+                                       onKnowledgeBaseUpdate(next);
+                                   }
+                                 }}
+                                 className="p-2 bg-white rounded-lg text-slate-400 hover:text-red-500"
+                               >
+                                 <Trash2 size={14} />
+                               </button>
+                            </div>
+                         </div>
+                         <h4 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">{model}</h4>
+                         <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black text-indigo-600">{(knowledgeBase[model] as LearningEntry[] || []).length} Nodes</span>
+                            <div className="px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-full text-[9px] font-black uppercase flex items-center gap-1.5">
+                               <ShieldCheck size={12} /> Sync Ready
+                            </div>
+                         </div>
+                      </div>
+                    ))}
                   </div>
                 )}
              </div>
