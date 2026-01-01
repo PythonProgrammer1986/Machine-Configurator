@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { BOMPart, MachineKnowledge, ConfidenceLevel, TechnicalGlossary } from '../types';
+import { BOMPart, MachineKnowledge, ConfidenceLevel, TechnicalGlossary, LearningEntry } from '../types';
 import { 
   FileStack, 
   Upload, 
@@ -10,10 +10,8 @@ import {
   Loader2, 
   ArrowRight, 
   CheckCircle2, 
-  Info,
   Brain,
   History,
-  ShieldCheck,
   SearchCode,
   Book
 } from 'lucide-react';
@@ -54,16 +52,14 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
   const partIndex = useMemo(() => {
     return parts.map(p => {
       let technicalSource = `${p.Name} ${p.Remarks} ${p.Std_Remarks} ${p.Ref_des}`.toUpperCase();
-      // Fix for Error in file components/MOProvision.tsx on line 139: Property 'split' does not exist on type 'unknown'.
-      // Explicitly typing Object.entries for the glossary to ensure 'full' is recognized as a string.
       (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
-        if (technicalSource.includes(abbr)) technicalSource += ` ${full}`;
+        if (technicalSource.includes(abbr.toUpperCase())) technicalSource += ` ${full.toUpperCase()}`;
       });
       return {
         part: p,
         tokens: new Set(technicalSource.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s))),
-        pn: p.Part_Number.toUpperCase(),
-        ref: p.Ref_des.toUpperCase()
+        pn: String(p.Part_Number).toUpperCase(),
+        ref: String(p.Ref_des).toUpperCase()
       };
     });
   }, [parts, glossary]);
@@ -74,7 +70,7 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
 
     if (!files || files.length === 0 || parts.length === 0) return;
     if (!effectiveApiKey) {
-      setError("Connection Failure: No API Key Configured.");
+      setError("System Link Failure: Missing API Key.");
       return;
     }
 
@@ -89,24 +85,14 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
       const filePromises = (Array.from(files) as File[]).map(async (file) => {
         const base64 = await new Promise<string>((res) => {
           const r = new FileReader();
-          r.onload = () => {
-            const result = r.result;
-            if (typeof result === 'string') {
-              // Extract the base64 part safely.
-              res(result.split(',')[1] || '');
-            } else {
-              res('');
-            }
-          };
+          r.onload = () => res((r.result as string).split(',')[1] || '');
           r.readAsDataURL(file);
         });
 
         const prompt = `
           ACT AS AN ENGINEERING DATA EXTRACTOR.
-          1. Identify Machine Model (e.g. D65P-16, PC300).
-          2. Extract the Configuration Table (Columns: Name/Category, Option/Selection, Quantity).
-          IGNORE noise rows like "No option selected".
-          RETURN STRICT JSON: {"model": "string", "options": [{"category": "string", "selection": "string", "quantity": "string"}]}
+          EXTRACT Machine Model and Configuration Table.
+          JSON SCHEMA: {"model": "string", "options": [{"category": "string", "selection": "string", "quantity": "string"}]}
         `;
 
         const response = await ai.models.generateContent({
@@ -132,19 +118,21 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
       }
 
       const allOptions = pages.flatMap(p => p.options || []);
-      const modelHistory = knowledgeBase[detectedModel] || [];
+      const modelHistory = (knowledgeBase[detectedModel] || []) as LearningEntry[];
       const matchedIds = new Set<string>();
 
       allOptions.forEach(opt => {
-        const queryRaw = `${opt.category} ${opt.selection}`.toUpperCase();
+        // NORMALIZATION: Must match Academy exactly
+        const normCat = String(opt.category).trim().toUpperCase();
+        const normSel = String(opt.selection).trim().toUpperCase();
+        const queryRaw = `${normCat} ${normSel}`;
+        
         let queryTokens = queryRaw.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s));
-        // Fix for Error in file components/MOProvision.tsx on line 139: Property 'split' does not exist on type 'unknown'.
-        // Explicitly casting Object.entries(glossary) to ensure 'full' is treated as a string before calling .split()
         (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
-          if (queryRaw.includes(abbr)) queryTokens.push(...full.split(' '));
+          if (queryRaw.includes(abbr.toUpperCase())) queryTokens.push(...full.toUpperCase().split(' '));
         });
         const queryTokenSet = new Set(queryTokens);
-        const catTokens = new Set(opt.category.toUpperCase().split(/[\s,./()]+/));
+        const catTokens = new Set(normCat.split(/[\s,./()]+/));
 
         let bestMatch: typeof partIndex[0] | null = null;
         let topScore = 0;
@@ -153,34 +141,50 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
         partIndex.forEach(ip => {
           let score = 0;
           if (queryRaw.includes(ip.pn)) score = 1.1;
-          const isLearned = modelHistory.some(h => h.category === opt.category && h.selection === opt.selection && h.partNumber === ip.pn);
+          
+          const isLearned = modelHistory.some(h => 
+            h.category.toUpperCase() === normCat && 
+            h.selection.toUpperCase() === normSel && 
+            h.partNumber.toUpperCase() === ip.pn
+          );
+          
           if (isLearned) score = Math.max(score, 1.0);
+          
           let semanticHits = 0;
           queryTokenSet.forEach(t => { if (ip.tokens.has(t)) semanticHits++; });
           const semanticScore = queryTokenSet.size > 0 ? (semanticHits / queryTokenSet.size) * 0.7 : 0;
           score = Math.max(score, semanticScore);
+          
           if (ip.ref && catTokens.has(ip.ref)) score += 0.2;
+          
           if (score > topScore) { topScore = score; bestMatch = ip; }
         });
 
         let level = ConfidenceLevel.UNCERTAIN;
         if (topScore >= 0.9) {
           level = ConfidenceLevel.AUTO_VERIFIED;
-          finalSource = modelHistory.some(h => h.partNumber === bestMatch?.pn) ? 'Learned' : 'AI';
+          finalSource = modelHistory.some(h => h.partNumber.toUpperCase() === bestMatch?.pn) ? 'Learned' : 'AI';
         } else if (topScore >= 0.5) {
           level = ConfidenceLevel.REVIEW_NEEDED;
           finalSource = 'Hybrid';
         }
 
         if (bestMatch && topScore >= 0.6) matchedIds.add(bestMatch.part.id);
-        resultsBatch.push({ ...opt, matchedPart: bestMatch?.part, confidence: Math.min(topScore, 1.0), level, source: finalSource });
+        resultsBatch.push({ 
+          category: normCat,
+          selection: normSel,
+          quantity: opt.quantity,
+          matchedPart: bestMatch?.part, 
+          confidence: Math.min(topScore, 1.0), 
+          level, 
+          source: finalSource 
+        });
       });
 
       setResults(resultsBatch.sort((a, b) => b.confidence - a.confidence));
       if (matchedIds.size > 0) onAutoSelect(matchedIds);
     } catch (err) {
-      console.error(err);
-      setError("Intelligence Engine Error: Please verify your API Key and connection.");
+      setError("Intelligence Engine Error: Check API Key and Connectivity.");
     } finally {
       setIsProcessing(false);
     }
@@ -206,17 +210,17 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
             </div>
             <div className="flex items-center gap-2 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
               <History className="text-indigo-500" size={14} />
-              <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">{results.filter(r => r.source === 'Learned').length} Learned Matches</span>
+              <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">{results.filter(r => r.source === 'Learned').length} Mastered Matches</span>
             </div>
             <div className="flex items-center gap-2 bg-slate-50 px-3 py-1 rounded-full border border-slate-200">
               <Book className="text-slate-400" size={14} />
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Dictionary Active</span>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Semantic Context On</span>
             </div>
           </div>
         </div>
         {results.length > 0 && (
           <button onClick={onNavigateToSelection} className="bg-indigo-600 text-white px-10 py-4 rounded-[2rem] text-xs font-black uppercase tracking-[0.2em] shadow-2xl hover:bg-indigo-700 transition-all flex items-center gap-3">
-            Enter Validation Hub <ArrowRight size={20} />
+            Review Components <ArrowRight size={20} />
           </button>
         )}
       </div>
@@ -224,11 +228,11 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
         <div className="lg:col-span-4 space-y-6">
           <div className="relative border-4 border-dashed border-slate-100 rounded-[3rem] p-12 flex flex-col items-center justify-center bg-white hover:border-indigo-200 transition-all min-h-[450px] shadow-sm">
-            <input type="file" multiple accept="image/*" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer z-20" />
+            <input type="file" multiple accept="image/*,application/pdf" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer z-20" />
             {isProcessing ? (
               <div className="flex flex-col items-center gap-6">
                 <Loader2 className="w-20 h-20 text-indigo-600 animate-spin" />
-                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-600 animate-pulse">Running Neural Fusion...</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-600 animate-pulse">Neural Cross-Reference...</p>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-6 text-center">
@@ -236,19 +240,19 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
                   <Upload className="w-16 h-16 text-slate-300" />
                 </div>
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-700">Scan Factory Order</p>
-                  <p className="text-[10px] font-bold text-slate-400 mt-2 px-10 leading-relaxed uppercase tracking-tighter">Probabilistic matching uses historical patterns and engineering glossary</p>
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-700">Drop Factory Orders</p>
+                  <p className="text-[10px] font-bold text-slate-400 mt-2 px-10 leading-relaxed uppercase tracking-tighter">AI automatically maps configuration specs to your parts database using learned weights.</p>
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        <div className="lg:col-span-8 space-y-6 max-h-[800px] overflow-auto pr-4 scroll-smooth">
+        <div className="lg:col-span-8 space-y-6 max-h-[800px] overflow-auto pr-4 custom-scrollbar">
           {results.length === 0 ? (
              <div className="h-full flex flex-col items-center justify-center text-slate-200 gap-6 opacity-40 py-40">
                 <SearchCode size={80} />
-                <p className="text-[10px] font-black uppercase tracking-[0.5em]">Awaiting Order Input</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.5em]">Awaiting Technical Spec</p>
              </div>
           ) : results.map((res, i) => (
             <div key={i} className={`p-8 rounded-[2.5rem] border-2 transition-all duration-300 ${
@@ -268,7 +272,7 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
                     'bg-slate-50 text-slate-500 border-slate-200'
                   }`}>
                     {res.source === 'Learned' ? <History size={12} /> : <Sparkles size={12} />}
-                    {res.source === 'Learned' ? 'Confidence: HIGH (Learned)' : `${Math.round(res.confidence * 100)}% Confidence`}
+                    {res.source === 'Learned' ? 'Confidence: MASTERED' : `${Math.round(res.confidence * 100)}% Match`}
                   </div>
                 </div>
               </div>
