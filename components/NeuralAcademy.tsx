@@ -6,18 +6,13 @@ import {
   Play, 
   Loader2, 
   FileText, 
-  Download, 
   BrainCircuit, 
   History,
   Trash2,
   Zap,
   ShieldCheck,
   Database,
-  RefreshCw,
-  Plus,
-  BookOpenCheck,
-  FileJson,
-  Check
+  RefreshCw
 } from 'lucide-react';
 
 interface Props {
@@ -169,7 +164,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
               <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center relative cursor-pointer hover:border-indigo-300">
                 <input type="file" multiple onChange={e => setMoFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer" />
                 <FileText className="text-slate-300" size={24} />
-                <span className="text-[9px] font-black text-slate-400 mt-2 uppercase">{moFiles.length > 0 ? `${moFiles.length} Selected` : 'Upload PDFs'}</span>
+                <span className="text-[9px] font-black text-slate-400 mt-2 uppercase">{(moFiles.length > 0) ? `${moFiles.length} Selected` : 'Upload PDFs'}</span>
               </div>
               <button onClick={startTraining} disabled={isTraining} className={`w-full py-5 rounded-2xl flex items-center justify-center gap-3 text-xs font-black uppercase transition-all shadow-xl ${isTraining ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
                 {isTraining ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
@@ -183,13 +178,18 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                <button onClick={() => setTrainingLog([])} className="text-slate-500 hover:text-white"><Trash2 size={14} /></button>
              </div>
              <div className="font-mono text-[9px] space-y-2">
-                {trainingLog.map((l, i) => <div key={i} className={`flex gap-2 ${l.type === 'error' ? 'text-red-400' : l.type === 'success' ? 'text-emerald-400' : 'text-slate-300'}`}><span>>></span><span>{l.msg}</span></div>)}
+                {trainingLog.map((l, i) => (
+                  <div key={i} className={`flex gap-2 ${l.type === 'error' ? 'text-red-400' : l.type === 'success' ? 'text-emerald-400' : 'text-slate-300'}`}>
+                    <span>&gt;&gt;</span>
+                    <span>{l.msg}</span>
+                  </div>
+                ))}
              </div>
           </div>
         </div>
 
         <div className="lg:col-span-8">
-           {pendingMatches.length > 0 ? (
+           {(pendingMatches.length > 0) ? (
              <div className="bg-white rounded-[2.5rem] border-2 border-indigo-100 p-8 shadow-2xl animate-in zoom-in-95">
                 <div className="flex justify-between items-center mb-8">
                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Pattern Proposals</h3>
@@ -225,7 +225,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
            ) : (
              <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 shadow-sm h-full min-h-[500px]">
                 <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-8"><BrainCircuit size={14} /> Repository</h3>
-                {stats.models === 0 ? (
+                {(stats.models === 0) ? (
                    <div className="h-full flex flex-col items-center justify-center text-slate-200 py-40">
                       <History size={80} className="mb-6 opacity-20" />
                       <p className="text-xs font-black uppercase tracking-[0.4em]">Empty</p>
