@@ -1,4 +1,3 @@
-
 import React, { useMemo, useCallback, useState } from 'react';
 import { BOMPart, ConfigRule } from '../types';
 import { 
@@ -9,7 +8,6 @@ import {
   ShieldCheck, 
   Search, 
   Check,
-  SortAsc,
   Zap
 } from 'lucide-react';
 
@@ -24,12 +22,11 @@ interface Props {
 const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelectionChange, onGenerate }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [sortByFCode, setSortByFCode] = useState(false);
 
-  // F_Code 1, 2, and 9 are all considered configurable or logic-driven
+  // F_Code 1, 2, and 9 are all treated as configurable items
   const configParts = useMemo(() => parts.filter(p => p.F_Code === 1 || p.F_Code === 2 || p.F_Code === 9), [parts]);
 
-  // High Performance Logic Solver
+  // Solver for identifying parts recommended by engineering logic
   const logicSelectedIds = useMemo(() => {
     const currentLogicSelected = new Set<string>();
     let changed = true;
@@ -55,11 +52,6 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
 
         const part = parts.find(p => p.id === rule.targetPartId);
         if (!part) continue;
-
-        if (part.F_Code === 2) {
-           const groupAlreadyChosen = parts.some(p => p.Ref_des === part.Ref_des && (selectedIds.has(p.id) || currentLogicSelected.has(p.id)));
-           if (groupAlreadyChosen) continue;
-        }
 
         const { includes, excludes, orGroups } = rule.logic;
         const allIn = includes.every(kw => currentContextTokens.has(kw.toUpperCase()));
@@ -89,39 +81,36 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
       groups[key].push(p);
     });
 
-    const entries = Object.entries(groups);
-
-    if (sortByFCode) {
-      return entries.sort((a, b) => {
-        const fA = a[1][0].F_Code;
-        const fB = b[1][0].F_Code;
-        return fB - fA;
-      });
-    }
-
-    return entries.sort((a, b) => {
+    return Object.entries(groups).sort((a, b) => {
       const minA = Math.min(...a[1].map(p => p.Select_pref || 9999));
       const minB = Math.min(...b[1].map(p => p.Select_pref || 9999));
       return minA - minB;
     });
-  }, [configParts, searchTerm, sortByFCode]);
+  }, [configParts, searchTerm]);
 
   const validation = useMemo(() => {
     let missingF2 = 0;
     let totalF2Groups = 0;
-
     groupedParts.forEach(([_, items]) => {
       const isF2 = items.some(p => p.F_Code === 2);
-      if (isF2) totalF2Groups++;
-      const hasPick = items.some(p => selectedIds.has(p.id));
-      if (isF2 && !hasPick) missingF2++;
+      if (isF2) {
+        totalF2Groups++;
+        if (!items.some(p => selectedIds.has(p.id))) missingF2++;
+      }
     });
-
-    const progress = totalF2Groups > 0 ? Math.round(((totalF2Groups - missingF2) / totalF2Groups) * 100) : 100;
-    const isValid = missingF2 === 0;
-
-    return { isValid, progress };
+    return { 
+      isValid: missingF2 === 0, 
+      progress: totalF2Groups > 0 ? Math.round(((totalF2Groups - missingF2) / totalF2Groups) * 100) : 100 
+    };
   }, [groupedParts, selectedIds]);
+
+  const handleProceedWithSuggestion = () => {
+    const finalSet = new Set(selectedIds);
+    logicSelectedIds.forEach(id => finalSet.add(id));
+    onSelectionChange(finalSet);
+    // Proceed to manifest after state update
+    setTimeout(onGenerate, 100);
+  };
 
   const toggleSelection = useCallback((part: BOMPart) => {
     const next = new Set(selectedIds);
@@ -129,34 +118,14 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
       next.delete(part.id);
     } else {
       if (part.F_Code === 2) {
-        const group = groupedParts.find(([k]) => k === part.Ref_des)?.[1] || [];
+        const key = part.Ref_des || 'General';
+        const group = groupedParts.find(([k]) => k === key)?.[1] || [];
         group.forEach(p => next.delete(p.id));
       }
       next.add(part.id);
     }
     onSelectionChange(next);
   }, [selectedIds, groupedParts, onSelectionChange]);
-
-  const handleProceedWithSuggestion = () => {
-    const finalSet = new Set(selectedIds);
-    // Add all current logic suggestions to the final set
-    logicSelectedIds.forEach(id => finalSet.add(id));
-    onSelectionChange(finalSet);
-    // Proceed directly to the generated manifest screen
-    setTimeout(() => {
-      onGenerate();
-    }, 50);
-  };
-
-  const getFCodeStyle = (fcode: number) => {
-    switch (fcode) {
-      case 1: return 'bg-emerald-50 text-emerald-700 border-emerald-100';
-      case 2: return 'bg-amber-50 text-amber-700 border-amber-200';
-      case 9: return 'bg-slate-50 text-slate-700 border-slate-300';
-      case 0: return 'bg-indigo-50 text-indigo-700 border-indigo-100';
-      default: return 'bg-slate-50 text-slate-400 border-slate-200';
-    }
-  };
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
@@ -171,10 +140,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
             </h2>
             <div className="mt-4 flex items-center gap-4">
               <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full transition-all duration-700 ${validation.isValid ? 'bg-emerald-500' : 'bg-amber-500'}`} 
-                  style={{ width: `${validation.progress}%` }}
-                ></div>
+                <div className={`h-full transition-all duration-700 ${validation.isValid ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${validation.progress}%` }}></div>
               </div>
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                 {validation.progress}% Critical Options Configured
@@ -202,11 +168,7 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
             <button 
               onClick={onGenerate} 
               disabled={!validation.isValid} 
-              className={`px-6 py-2.5 rounded-xl flex items-center gap-2 font-black transition-all text-[10px] uppercase tracking-widest shadow-lg ${
-                validation.isValid 
-                ? 'bg-indigo-600 hover:bg-indigo-700 text-white' 
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-              }`}
+              className={`px-6 py-2.5 rounded-xl flex items-center gap-2 font-black transition-all text-[10px] uppercase tracking-widest shadow-lg ${validation.isValid ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
             >
               <ShieldCheck size={16} /> Finalize BOM
             </button>
@@ -219,60 +181,38 @@ const SelectionScreen: React.FC<Props> = ({ parts, rules, selectedIds, onSelecti
           const isExpanded = expandedGroups.has(group) || searchTerm.length > 0;
           const userHasPick = items.some(p => selectedIds.has(p.id));
           const logicHasPick = items.some(p => logicSelectedIds.has(p.id));
-          const primaryFCode = items[0].F_Code;
+          const fcode = items[0].F_Code;
 
           return (
-            <div key={group} className={`border rounded-[2rem] overflow-hidden transition-all bg-white shadow-sm ${
-              userHasPick ? 'border-emerald-500 ring-4 ring-emerald-500/5' : 
-              logicHasPick ? 'border-amber-500 ring-4 ring-amber-500/5' : 'border-slate-200'
-            }`}>
-              <button 
-                onClick={() => {
-                  const next = new Set(expandedGroups);
-                  if (next.has(group)) next.delete(group);
-                  else next.add(group);
-                  setExpandedGroups(next);
-                }} 
-                className="w-full px-8 py-5 flex items-center justify-between hover:bg-slate-50/50"
-              >
+            <div key={group} className={`border rounded-[2rem] overflow-hidden transition-all bg-white shadow-sm ${userHasPick ? 'border-emerald-500 ring-4 ring-emerald-500/5' : logicHasPick ? 'border-amber-500 ring-4 ring-amber-500/5' : 'border-slate-200'}`}>
+              <button onClick={() => {
+                const n = new Set(expandedGroups);
+                if (n.has(group)) n.delete(group); else n.add(group);
+                setExpandedGroups(n);
+              }} className="w-full px-8 py-5 flex items-center justify-between hover:bg-slate-50/50">
                 <div className="flex items-center gap-6">
-                  <div className={`p-3 rounded-xl ${userHasPick ? 'bg-emerald-600 text-white shadow-emerald-200' : logicHasPick ? 'bg-amber-600 text-white shadow-amber-200' : 'bg-slate-100 text-slate-400'}`}>
+                  <div className={`p-3 rounded-xl ${userHasPick ? 'bg-emerald-600 text-white' : logicHasPick ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                     <Hash size={20} />
                   </div>
                   <div className="text-left flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                    <span className={`px-2 py-0.5 rounded text-[9px] font-black border uppercase tracking-widest ${getFCodeStyle(primaryFCode)}`}>
-                      CODE {primaryFCode}
-                    </span>
-                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest">
-                      {group}
-                    </h3>
+                    <span className="px-2 py-0.5 rounded text-[9px] font-black border uppercase tracking-widest bg-slate-50 text-slate-600">CODE {fcode}</span>
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest">{group}</h3>
                     <span className="font-bold text-slate-600 text-sm">{items[0].Name}</span>
                   </div>
                 </div>
                 {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
               </button>
-
               {isExpanded && (
                 <div className="p-8 pt-0 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-top-1">
                   {items.map(part => {
-                    const isSelected = selectedIds.has(part.id);
-                    const isRecommended = logicSelectedIds.has(part.id);
+                    const isS = selectedIds.has(part.id);
+                    const isR = logicSelectedIds.has(part.id);
                     return (
-                      <button
-                        key={part.id}
-                        onClick={() => toggleSelection(part)}
-                        className={`flex flex-col text-left p-6 rounded-[2rem] border-2 transition-all group ${
-                          isSelected ? 'border-emerald-500 bg-emerald-50/20 shadow-lg scale-[1.02]' : 
-                          isRecommended ? 'border-amber-400 bg-amber-50/20' : 'border-slate-100 hover:border-indigo-200'
-                        }`}
-                      >
+                      <button key={part.id} onClick={() => toggleSelection(part)} className={`flex flex-col text-left p-6 rounded-[2rem] border-2 transition-all group ${isS ? 'border-emerald-500 bg-emerald-50/20 shadow-lg scale-[1.02]' : isR ? 'border-amber-400 bg-amber-50/20 shadow-sm' : 'border-slate-100 hover:border-indigo-200'}`}>
                         <div className="flex justify-between items-start mb-4">
                           <span className="text-[9px] font-black font-mono text-slate-400 uppercase tracking-tighter">{part.Part_Number}</span>
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                            isSelected ? 'bg-emerald-600 border-emerald-600 text-white' : 
-                            isRecommended ? 'bg-amber-500 border-amber-500 text-white' : 'border-slate-200'
-                          }`}>
-                            {(isSelected || isRecommended) && <Check size={10} strokeWidth={4} />}
+                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isS ? 'bg-emerald-600 border-emerald-600 text-white' : isR ? 'bg-amber-500 border-amber-500 text-white' : 'border-slate-200'}`}>
+                            {(isS || isR) && <Check size={10} strokeWidth={4} />}
                           </div>
                         </div>
                         <p className="text-xs font-black text-slate-800 leading-tight mb-2 uppercase tracking-tight">{part.Name}</p>
