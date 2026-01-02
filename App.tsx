@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BOMPart, ConfigRule, AppScreen, MachineKnowledge, TechnicalGlossary } from './types';
 import BOMTable from './components/BOMTable';

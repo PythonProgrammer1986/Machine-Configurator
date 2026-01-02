@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { BOMPart, MachineKnowledge, ConfidenceLevel, TechnicalGlossary } from '../types';
@@ -43,6 +42,13 @@ interface MatchResult {
   source: 'Learned' | 'Hybrid' | 'AI' | 'Partial' | 'None';
 }
 
+interface IndexedPart {
+  part: BOMPart;
+  tokens: Set<string>;
+  pn: string;
+  ref: string;
+}
+
 const STOP_WORDS = new Set(['WITH', 'AND', 'THE', 'FOR', 'NON', 'NONE', 'SELECTED', 'UNIT', 'OPTIONS']);
 
 const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, onAutoSelect, onModelDetected, onNavigateToSelection }) => {
@@ -51,11 +57,9 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
   const [error, setError] = useState<string | null>(null);
   const [modelName, setModelName] = useState('Generic');
 
-  const partIndex = useMemo(() => {
+  const partIndex: IndexedPart[] = useMemo(() => {
     return parts.map(p => {
       let technicalSource = `${p.Name} ${p.Remarks} ${p.Std_Remarks} ${p.Ref_des}`.toUpperCase();
-      // Fix for Error in file components/MOProvision.tsx on line 139: Property 'split' does not exist on type 'unknown'.
-      // Explicitly typing Object.entries for the glossary to ensure 'full' is recognized as a string.
       (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
         if (technicalSource.includes(abbr)) technicalSource += ` ${full}`;
       });
@@ -92,7 +96,6 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
           r.onload = () => {
             const result = r.result;
             if (typeof result === 'string') {
-              // Extract the base64 part safely.
               res(result.split(',')[1] || '');
             } else {
               res('');
@@ -138,15 +141,13 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
       allOptions.forEach(opt => {
         const queryRaw = `${opt.category} ${opt.selection}`.toUpperCase();
         let queryTokens = queryRaw.split(/[\s,./()]+/).filter(s => s.length > 2 && !STOP_WORDS.has(s));
-        // Fix for Error in file components/MOProvision.tsx on line 139: Property 'split' does not exist on type 'unknown'.
-        // Explicitly casting Object.entries(glossary) to ensure 'full' is treated as a string before calling .split()
         (Object.entries(glossary) as [string, string][]).forEach(([abbr, full]) => {
           if (queryRaw.includes(abbr)) queryTokens.push(...full.split(' '));
         });
         const queryTokenSet = new Set(queryTokens);
         const catTokens = new Set(opt.category.toUpperCase().split(/[\s,./()]+/));
 
-        let bestMatch: typeof partIndex[0] | null = null;
+        let bestMatch: IndexedPart | null = null;
         let topScore = 0;
         let finalSource: MatchResult['source'] = 'None';
 

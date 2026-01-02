@@ -1,10 +1,11 @@
-// vite.config.ts
-export default {
+import { defineConfig } from 'vite';
+
+export default defineConfig({
   build: {
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
       output: {
-        manualChunks(id) {
+        manualChunks(id: string) {
           if (id.includes('node_modules')) {
             return 'vendor';
           }
@@ -12,4 +13,4 @@ export default {
       }
     }
   }
-}
+});
