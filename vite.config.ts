@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite';
-
-export default defineConfig({
+// vite.config.ts
+export default {
   build: {
+    minify: false, // Disables esbuild minification
     chunkSizeWarningLimit: 2000,
   },
-});
+}
