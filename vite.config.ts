@@ -1,7 +1,5 @@
-// vite.config.ts
-export default {
-  build: {
-    minify: false, // Disables esbuild minification
-    chunkSizeWarningLimit: 2000,
-  },
-}
+// vite.config.js
+import { splitVendorChunkPlugin } from 'vite'
+export default defineConfig({
+  plugins: [splitVendorChunkPlugin()]
+})
