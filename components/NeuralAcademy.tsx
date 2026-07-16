@@ -143,7 +143,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           const data = e.target?.result;
           const workbook = (window as any).XLSX.read(data, { type: 'binary' });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const rawRows = (window as any).XLSX.utils.sheet_to_json(firstSheet);
+          const rawRows = (window as any).XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
           
           if (rawRows.length === 0) {
             resolve([]);
@@ -153,18 +153,19 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           const normalizedRows = rawRows.map((row: any) => {
             const normalized: any = { _raw: row };
             Object.keys(row).forEach(key => {
-              const val = row[key];
+              const val = String(row[key] || '').trim();
+              if (!val) return;
               const k = key.toLowerCase().replace(/[^a-z0-9]/g, '');
               if (k === 'mo' || k.includes('order') || k.includes('monumber') || k === 'factoryorder') {
                 normalized['monumber'] = val;
                 normalized['norm_mo'] = normalizeId(val);
-              } else if (k === 'partno' || k.includes('partnumber') || k === 'pn' || k === 'sku') {
+              } else if (k === 'partno' || k.includes('partnumber') || k === 'pn' || k === 'sku' || k.includes('targetcomponent') || k.includes('targetsku') || k.includes('component') || k === 'material' || k === 'materialno' || k.includes('item')) {
                 normalized['partnumber'] = val;
                 normalized['norm_pn'] = normalizeId(val);
-              } else if (k === 'partname' || k.includes('name') || k.includes('nomenclature')) {
+              } else if (k === 'partname' || k.includes('name') || k.includes('nomenclature') || k.includes('description') || k.includes('text')) {
                 normalized['name'] = val;
-              } else if (k === 'remarks' || k.includes('notes') || k.includes('technical')) {
-                normalized['remarks'] = val;
+              } else if (k === 'remarks' || k.includes('notes') || k.includes('technical') || k === 'f' || k.includes('fcode')) {
+                normalized[k] = val;
               } else {
                 normalized[k] = val;
               }
@@ -215,26 +216,50 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           r.readAsDataURL(file);
         });
 
-        const resp = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: {
-            parts: [
-              { text: `Identify MO Number. Extract 'Options' table (Name/Option columns). JSON: {"moNumber": "string", "options": [{"name": "string", "option": "string"}]}` },
-              { inlineData: { mimeType: file.type, data: base64 } }
-            ]
-          },
-          config: { responseMimeType: "application/json" }
-        });
+        let retryCount = 0;
+        let success = false;
 
-        const data = safeJsonParse(resp.text || '{}');
-        const moNum = String(data.moNumber || '').trim();
-        if (moNum) {
-          moDetails.push({ 
-            moNumber: moNum, 
-            normMo: normalizeId(moNum),
-            specs: data.options || [] 
-          });
-          addLog(`Order #${moNum} mapped.`, 'success');
+        while (!success && retryCount < 4) {
+          try {
+            const resp = await ai.models.generateContent({
+              model: 'gemini-3-flash-preview',
+              contents: {
+                parts: [
+                  { text: `Identify MO Number. Extract 'Options' table (Name/Option columns). JSON: {"moNumber": "string", "options": [{"name": "string", "option": "string"}]}` },
+                  { inlineData: { mimeType: file.type, data: base64 } }
+                ]
+              },
+              config: { responseMimeType: "application/json" }
+            });
+
+            const data = safeJsonParse(resp.text || '{}');
+            const moNum = String(data.moNumber || '').trim();
+            if (moNum) {
+              moDetails.push({ 
+                moNumber: moNum, 
+                normMo: normalizeId(moNum),
+                specs: data.options || [] 
+              });
+              addLog(`Order #${moNum} mapped.`, 'success');
+            }
+            success = true;
+          } catch (aiErr: any) {
+            const errStr = String(aiErr.message || JSON.stringify(aiErr) || aiErr);
+            if (errStr.includes('429') || errStr.includes('503') || errStr.includes('UNAVAILABLE')) {
+              retryCount++;
+              if (retryCount >= 4) {
+                addLog(`Max retries reached for ${file.name}. Skipping...`, 'error');
+                break;
+              }
+              const backoff = 15000 * retryCount;
+              addLog(`API High Demand (503/429): Pausing ${backoff/1000}s... (Attempt ${retryCount}/3)`, 'warn');
+              setCooldownRemaining(Math.round(backoff/1000));
+              await delay(backoff);
+            } else {
+              addLog(`Error analyzing ${file.name}: ${errStr}`, 'error');
+              break;
+            }
+          }
         }
       }
 
@@ -253,18 +278,52 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
         });
       });
 
-      const skus = Object.keys(skuContexts);
+      let skus = Object.keys(skuContexts);
       if (skus.length === 0) {
-        addLog(`Synthesis Aborted: No overlapping MO numbers found.`, 'error');
-        setIsTraining(false);
-        return;
+        addLog(`No overlapping MO numbers found. Proceeding with global MIL synthesis...`, 'warn');
+        milData.forEach(row => {
+          // Attempt to aggressively find the part number
+          let rawVals = Object.values(row._raw).map(v => String(v || '').trim()).filter(v => v);
+          let pn = String(row.partnumber || row.norm_pn || row._raw['Target Component (SKU)'] || row._raw['PN'] || row._raw['Part Number'] || row._raw['Material'] || (rawVals.length > 0 ? rawVals[0] : '')).trim();
+          
+          if (!pn) return;
+          if (!skuContexts[pn]) skuContexts[pn] = { contexts: [], mos: [], milEntry: row };
+          moDetails.forEach(mo => {
+            const fullContext = mo.specs.map(s => `${s.name}: ${s.option}`).join(' | ');
+            skuContexts[pn].contexts.push(`Global MO #${mo.moNumber} context: ${fullContext}`);
+            skuContexts[pn].mos.push(mo.moNumber);
+          });
+        });
+        skus = Object.keys(skuContexts);
+        if (skus.length === 0) {
+          addLog(`Synthesis Aborted: No SKUs identified in MIL file. Please check Excel columns.`, 'error');
+          setIsTraining(false);
+          return;
+        }
       }
 
       const currentProcessed = new Set(proposals.map(p => p.partNumber));
       const skusToProcess = skus.filter(s => {
         if (currentProcessed.has(s)) return false;
+        
         const masterPart = parts.find(p => normalizeId(p.Part_Number) === normalizeId(s));
-        return masterPart && (masterPart.F_Code === 1 || masterPart.F_Code === 2);
+        let fCodeToCheck: string | number | undefined = undefined;
+
+        if (masterPart) {
+          fCodeToCheck = masterPart.F_Code;
+        } else {
+          const milEntry = skuContexts[s]?.milEntry;
+          fCodeToCheck = milEntry?.fcode || milEntry?.f_code || milEntry?.f || milEntry?._raw?.['F Code'] || milEntry?._raw?.['F'];
+        }
+
+        if (fCodeToCheck !== undefined && fCodeToCheck !== null && fCodeToCheck !== '') {
+          const fStr = String(fCodeToCheck).trim();
+          if (fStr === '0' || fStr === '3' || fStr === '4' || fStr === '9') return false;
+          if (fStr === '1' || fStr === '2') return true;
+        }
+        
+        // If we can't definitively identify the F code, err on the side of processing it
+        return true;
       });
 
       if (skusToProcess.length === 0) {
@@ -299,12 +358,21 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
         while (!success && retryCount < 3) {
           try {
             const prompt = `
-              TASK: Create configuration logic formula for: ${pn} (${partName})
+              TASK: Create configuration logic trigger expression for Target Component (SKU): ${pn} (${partName})
               REMARKS: "${partRemarks}"
               TECH DICT: ${glossaryContext}
-              EVIDENCE: ${contexts.map((c, i) => `MO #${mos[i]}: ${c}`).join('\n')}
-              FORMAT: (INCLUDES) [EXCLUDES]
-              JSON: {"expression": "string", "confidence": number, "reasoning": "string", "indicators": ["string"]}
+              EVIDENCE FROM FACTORY ORDERS: 
+              ${contexts.map((c, i) => `MO #${mos[i]} Options: ${c}`).join('\n')}
+              
+              INSTRUCTIONS: 
+              Analyze the provided Factory Order (MO) options and the technical dictionary.
+              Determine the configuration logic that triggers this specific part.
+              Output the trigger expression in a format like "(CAB/CAN) STD [TT]", representing the combination of options required.
+              Use standard logical groupings: () for OR, [] for optional/specifics, or just space-separated for AND.
+              Make the expression concise and directly derived from the evidence.
+              
+              JSON OUTPUT FORMAT: 
+              {"expression": "string", "confidence": number, "reasoning": "string", "indicators": ["string"]}
             `;
 
             const resp = await ai.models.generateContent({
@@ -331,14 +399,19 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
             success = true;
             addLog(`Synthesized: ${pn} [${idx + 1}/${skusToProcess.length}]`, 'success');
           } catch (aiErr: any) {
-            if (aiErr.message?.includes('429')) {
+            const errStr = String(aiErr.message || JSON.stringify(aiErr) || aiErr);
+            if (errStr.includes('429') || errStr.includes('503') || errStr.includes('UNAVAILABLE')) {
               retryCount++;
-              const backoff = 30000 * retryCount;
-              addLog(`Rate Limit: Pausing ${backoff/1000}s...`, 'warn');
+              if (retryCount >= 4) {
+                addLog(`Max retries reached for ${pn}. Skipping...`, 'error');
+                break;
+              }
+              const backoff = 15000 * retryCount;
+              addLog(`API High Demand (503/429): Pausing ${backoff/1000}s... (Attempt ${retryCount}/3)`, 'warn');
               setCooldownRemaining(Math.round(backoff/1000));
               await delay(backoff);
             } else {
-              addLog(`Error for ${pn}: ${aiErr.message}`, 'error');
+              addLog(`Error for ${pn}: ${errStr}`, 'error');
               break;
             }
           }
@@ -408,9 +481,9 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
   const exportToExcel = () => {
     if (proposals.length === 0) return;
     const data = proposals.map(p => ({
-      "Part Number": p.partNumber,
+      "Target Component (SKU)": p.partNumber,
       "Part Name": p.partName,
-      "Synthesized Logic": p.proposedExpression,
+      "Trigger Expression": p.proposedExpression,
       "Confidence": `${Math.round(p.confidence * 100)}%`,
       "Evidence Hits": p.evidenceCount,
       "Associated MOs": p.matchedMOs.join(', '),
