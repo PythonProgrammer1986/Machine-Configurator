@@ -64,8 +64,8 @@ const BOMTable: React.FC<Props> = ({ parts, existingRules, knowledgeBase, onPart
 
     data.forEach((row, index) => {
       const part = newParts[index];
-      // Allow F_Code 1, 2, and 9 for rules
-      if (part.F_Code !== 1 && part.F_Code !== 2 && part.F_Code !== 9) return;
+      // Allow F_Code 1 and 2 for rules
+      if (part.F_Code !== 1 && part.F_Code !== 2) return;
 
       const excelLogic = row.Logic || row.Logic_Config || row.logic;
       let finalLogic: RuleLogic | null = null;

@@ -151,7 +151,7 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
         let topScore = 0;
         let finalSource: MatchResult['source'] = 'None';
 
-        partIndex.forEach(ip => {
+        for (const ip of partIndex) {
           let score = 0;
           if (queryRaw.includes(ip.pn)) score = 1.1;
           const isLearned = modelHistory.some(h => h.category === opt.category && h.selection === opt.selection && h.partNumber === ip.pn);
@@ -162,7 +162,7 @@ const MOProvision: React.FC<Props> = ({ parts, knowledgeBase, glossary, apiKey, 
           score = Math.max(score, semanticScore);
           if (ip.ref && catTokens.has(ip.ref)) score += 0.2;
           if (score > topScore) { topScore = score; bestMatch = ip; }
-        });
+        }
 
         let level = ConfidenceLevel.UNCERTAIN;
         if (topScore >= 0.9) {

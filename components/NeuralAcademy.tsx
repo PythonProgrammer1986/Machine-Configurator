@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { MachineKnowledge, LearningEntry, BOMPart, ConfigRule, ConfidenceLevel, TechnicalGlossary } from '../types';
 import { 
@@ -7,30 +7,34 @@ import {
   Loader2, 
   FileText, 
   BrainCircuit, 
-  Trash2,
-  Zap,
-  ShieldCheck,
-  Database,
-  FlaskConical,
-  FileSpreadsheet,
-  Upload,
-  ArrowRight,
-  CheckCircle2,
-  AlertCircle,
-  Download,
-  Terminal,
-  Layers,
-  Search,
-  Activity,
-  Cpu,
-  RefreshCw,
-  SearchCode,
-  CheckCircle,
-  Bug,
-  Info,
-  Layers2,
-  Binary,
-  Microchip
+  Trash2, 
+  Zap, 
+  ShieldCheck, 
+  Database, 
+  FlaskConical, 
+  FileSpreadsheet, 
+  Upload, 
+  ArrowRight, 
+  CheckCircle2, 
+  AlertCircle, 
+  Download, 
+  Terminal, 
+  Layers, 
+  Search, 
+  Activity, 
+  Cpu, 
+  RefreshCw, 
+  SearchCode, 
+  CheckCircle, 
+  Bug, 
+  Info, 
+  Layers2, 
+  Binary, 
+  Microchip,
+  Timer,
+  Clock,
+  RotateCcw,
+  Save
 } from 'lucide-react';
 
 interface Props {
@@ -62,9 +66,52 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
   const [trainingLog, setTrainingLog] = useState<{msg: string, type: 'info' | 'success' | 'error' | 'warn'}[]>([]);
   const [proposals, setProposals] = useState<LogicProposal[]>([]);
   const [resultSearchTerm, setResultSearchTerm] = useState('');
+  
+  // Batch & Cooldown States
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const BATCH_SIZE = 10;
+  const COOLDOWN_SECONDS = 65; 
+
+  // Persistence Key
+  const STORAGE_KEY = 'bom_synthesis_session';
+
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.proposals) setProposals(parsed.proposals);
+        addLog(`Restore point detected: ${parsed.proposals.length} existing formulas loaded.`, 'info');
+      } catch (e) {
+        console.error("Failed to load restore point", e);
+      }
+    }
+  }, []);
+
+  // Save to restore point whenever proposals change
+  useEffect(() => {
+    if (proposals.length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        proposals,
+        timestamp: new Date().toISOString()
+      }));
+    }
+  }, [proposals]);
+
+  useEffect(() => {
+    let timer: number;
+    if (cooldownRemaining > 0) {
+      timer = window.setInterval(() => {
+        setCooldownRemaining(prev => Math.max(0, prev - 1));
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [cooldownRemaining]);
 
   const addLog = (msg: string, type: 'info' | 'success' | 'error' | 'warn' = 'info') => 
     setTrainingLog(prev => [{ msg: `[${new Date().toLocaleTimeString()}] ${msg}`, type }, ...prev]);
+
+  const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
   const normalizeId = (id: any): string => {
     return String(id || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
@@ -77,6 +124,14 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
     } catch (e) {
       console.error("JSON Parse Error:", e, "Raw Text:", text);
       return {};
+    }
+  };
+
+  const clearSession = () => {
+    if (confirm("Clear current lab restore point and results?")) {
+      localStorage.removeItem(STORAGE_KEY);
+      setProposals([]);
+      addLog("Lab session reset. Starting from zero.", 'warn');
     }
   };
 
@@ -100,8 +155,6 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
             Object.keys(row).forEach(key => {
               const val = row[key];
               const k = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-              
-              // Map user's specific MIL headers: Sr. No, MO/ Order, Part No, Part Name, Quantity, Operation No, Remarks
               if (k === 'mo' || k.includes('order') || k.includes('monumber') || k === 'factoryorder') {
                 normalized['monumber'] = val;
                 normalized['norm_mo'] = normalizeId(val);
@@ -127,9 +180,6 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
   };
 
   const startLogicSynthesis = async () => {
-    setTrainingLog([{ msg: `[${new Date().toLocaleTimeString()}] Neural Logic Synthesis v9.0 Online.`, type: 'info' }]);
-    setProposals([]);
-
     const key = apiKey || process.env.API_KEY;
     if (!key) {
       addLog("Authentication Failure: Missing Gemini API Key.", 'error');
@@ -155,7 +205,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       const ai = new GoogleGenAI({ apiKey: key });
       const moDetails: { moNumber: string, normMo: string, specs: {name: string, option: string}[] }[] = [];
 
-      addLog(`Initiating Phase 2: PDF Vision Extraction & OCR...`, 'info');
+      addLog(`Initiating Phase 2: PDF Vision Extraction...`, 'info');
 
       for (const file of moFiles) {
         addLog(`Analyzing PDF: ${file.name}`, 'info');
@@ -169,11 +219,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           model: 'gemini-3-flash-preview',
           contents: {
             parts: [
-              { text: `Identify the MO Number (e.g. 8998039500). 
-                       Navigate to the 'Options' section (usually near page 7-8).
-                       Extract the configuration table with 'Name' and 'Option' columns.
-                       Example: Name='Operator's Environment', Option='Side seated canopy - low version'.
-                       RETURN JSON: {"moNumber": "string", "options": [{"name": "string", "option": "string"}]}` },
+              { text: `Identify MO Number. Extract 'Options' table (Name/Option columns). JSON: {"moNumber": "string", "options": [{"name": "string", "option": "string"}]}` },
               { inlineData: { mimeType: file.type, data: base64 } }
             ]
           },
@@ -188,9 +234,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
             normMo: normalizeId(moNum),
             specs: data.options || [] 
           });
-          addLog(`Order #${moNum} mapped with ${data.options?.length || 0} technical features.`, 'success');
-        } else {
-          addLog(`OCR Warning: Could not find valid MO number in ${file.name}.`, 'warn');
+          addLog(`Order #${moNum} mapped.`, 'success');
         }
       }
 
@@ -199,9 +243,6 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       
       moDetails.forEach(mo => {
         const linkedRows = milData.filter(row => row.norm_mo === mo.normMo);
-        if (linkedRows.length === 0) {
-          addLog(`Sync Warning: MO ${mo.moNumber} from PDF has no matching rows in MIL Excel.`, 'warn');
-        }
         linkedRows.forEach(row => {
           const pn = String(row.partnumber || '').trim();
           if (!pn) return;
@@ -214,79 +255,103 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
 
       const skus = Object.keys(skuContexts);
       if (skus.length === 0) {
-        addLog(`Synthesis Aborted: No overlapping MO numbers found between Excel and PDF.`, 'error');
+        addLog(`Synthesis Aborted: No overlapping MO numbers found.`, 'error');
         setIsTraining(false);
         return;
       }
 
-      addLog(`Initiating Phase 4: Probabilistic Trigger Synthesis for ${skus.length} parts...`, 'info');
-      const newProposals: LogicProposal[] = [];
+      const currentProcessed = new Set(proposals.map(p => p.partNumber));
+      const skusToProcess = skus.filter(s => {
+        if (currentProcessed.has(s)) return false;
+        const masterPart = parts.find(p => normalizeId(p.Part_Number) === normalizeId(s));
+        return masterPart && (masterPart.F_Code === 1 || masterPart.F_Code === 2);
+      });
+
+      if (skusToProcess.length === 0) {
+        addLog("All detected SKUs already synthesized in this session.", 'success');
+        setIsTraining(false);
+        return;
+      }
+
+      addLog(`Phase 4: Synthesis Engine Resumed. Processing ${skusToProcess.length} remaining SKUs...`, 'info');
       const glossaryContext = Object.entries(glossary).map(([k, v]) => `${k} = ${v}`).join('; ');
 
-      for (const pn of skus) {
+      for (let idx = 0; idx < skusToProcess.length; idx++) {
+        // Safe Batching Break
+        if (idx > 0 && idx % BATCH_SIZE === 0) {
+          addLog(`Batch completed. Quota cooldown triggered...`, 'warn');
+          setCooldownRemaining(COOLDOWN_SECONDS);
+          await delay(COOLDOWN_SECONDS * 1000);
+          addLog(`Cooldown finished. Resuming.`, 'info');
+        }
+
+        const pn = skusToProcess[idx];
         const { contexts, mos, milEntry } = skuContexts[pn];
         const masterPart = parts.find(p => normalizeId(p.Part_Number) === normalizeId(pn));
         const partName = masterPart?.Name || milEntry?.name || 'Component';
         const partRemarks = milEntry?.remarks || masterPart?.Remarks || '';
 
-        const prompt = `
-          ACT AS A SENIOR BOM ENGINEER.
-          
-          TASK: Create a configuration logic formula (Trigger Expression) for this part.
-          
-          PART: ${pn} (${partName})
-          MIL REMARKS: "${partRemarks}"
-          
-          TECHNICAL DICTIONARY:
-          ${glossaryContext}
-          
-          HISTORICAL EVIDENCE (MO SPECIFICATIONS):
-          ${contexts.map((c, i) => `MO #${mos[i]}: ${c}`).join('\n')}
+        await delay(1500);
 
-          GUIDELINES:
-          1. Cross-reference MIL Remarks (like 'LOW CAN') with MO Options (like 'low version').
-          2. Use (INCLUDES) for mandatory terms and [EXCLUDES] for forbidden ones.
-          3. Format: (KEYWORD1/KEYWORD2) [KEYWORD3]
-          4. Look for "Common Denominators" across all MO Evidence.
-          
-          RETURN JSON: {
-            "expression": "string", 
-            "confidence": number, 
-            "reasoning": "string",
-            "indicators": ["string"] 
+        let retryCount = 0;
+        let success = false;
+
+        while (!success && retryCount < 3) {
+          try {
+            const prompt = `
+              TASK: Create configuration logic formula for: ${pn} (${partName})
+              REMARKS: "${partRemarks}"
+              TECH DICT: ${glossaryContext}
+              EVIDENCE: ${contexts.map((c, i) => `MO #${mos[i]}: ${c}`).join('\n')}
+              FORMAT: (INCLUDES) [EXCLUDES]
+              JSON: {"expression": "string", "confidence": number, "reasoning": "string", "indicators": ["string"]}
+            `;
+
+            const resp = await ai.models.generateContent({
+              model: 'gemini-3-flash-preview',
+              contents: prompt,
+              config: { responseMimeType: "application/json" }
+            });
+
+            const logic = safeJsonParse(resp.text || '{}');
+            const proposal = {
+              partNumber: pn,
+              partName: partName,
+              proposedExpression: logic.expression || "(N/A)",
+              evidenceCount: contexts.length,
+              confidence: logic.confidence || 0.5,
+              reasoning: logic.reasoning || "Neural correlation result.",
+              matchedMOs: Array.from(new Set(mos)),
+              keyIndicators: logic.indicators || []
+            };
+
+            // Incremental Update: Add to state and save restore point immediately
+            setProposals(prev => [...prev, proposal]);
+            
+            success = true;
+            addLog(`Synthesized: ${pn} [${idx + 1}/${skusToProcess.length}]`, 'success');
+          } catch (aiErr: any) {
+            if (aiErr.message?.includes('429')) {
+              retryCount++;
+              const backoff = 30000 * retryCount;
+              addLog(`Rate Limit: Pausing ${backoff/1000}s...`, 'warn');
+              setCooldownRemaining(Math.round(backoff/1000));
+              await delay(backoff);
+            } else {
+              addLog(`Error for ${pn}: ${aiErr.message}`, 'error');
+              break;
+            }
           }
-        `;
-
-        try {
-          const resp = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: prompt,
-            config: { responseMimeType: "application/json" }
-          });
-
-          const logic = safeJsonParse(resp.text || '{}');
-          newProposals.push({
-            partNumber: pn,
-            partName: partName,
-            proposedExpression: logic.expression || "(N/A)",
-            evidenceCount: contexts.length,
-            confidence: logic.confidence || 0.5,
-            reasoning: logic.reasoning || "Derived via automated pattern matching.",
-            matchedMOs: Array.from(new Set(mos)),
-            keyIndicators: logic.indicators || []
-          });
-        } catch (aiErr: any) {
-          addLog(`Synthesis Error for ${pn}: ${aiErr.message}`, 'error');
         }
       }
 
-      setProposals(newProposals.sort((a, b) => b.evidenceCount - a.evidenceCount));
-      addLog(`Laboratory synthesis complete. Found ${newProposals.length} logical connections.`, 'success');
+      addLog(`Laboratory synthesis complete.`, 'success');
 
     } catch (e: any) {
       addLog(`Fatal Lab Error: ${e.message}`, 'error');
     } finally {
       setIsTraining(false);
+      setCooldownRemaining(0);
     }
   };
 
@@ -299,7 +364,7 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       const ai = new GoogleGenAI({ apiKey: key });
       const newKB = { ...knowledgeBase };
       for (const file of moFiles) {
-        addLog(`Analyzing weights for: ${file.name}`, 'info');
+        addLog(`Analyzing weights: ${file.name}`, 'info');
         const base64 = await new Promise<string>((res) => {
           const r = new FileReader();
           r.onload = () => res((r.result as string).split(',')[1] || '');
@@ -314,10 +379,9 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
         const data = safeJsonParse(resp.text || '{}');
         const model = (data.model || 'Generic').toUpperCase();
         if (!newKB[model]) newKB[model] = [];
-        addLog(`Weights updated for model ${model}.`, 'success');
+        addLog(`Weights updated for ${model}.`, 'success');
       }
       onKnowledgeBaseUpdate(newKB);
-      addLog(`Weights training finalized.`, 'success');
     } catch (e: any) { addLog(`Error: ${e.message}`, 'error'); } finally { setIsTraining(false); }
   };
 
@@ -336,8 +400,9 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
     });
     onRulesUpdate(newRules);
     setProposals([]);
-    addLog(`Synthesized logic deployed to Engineering Rulebase.`, 'success');
-    alert(`Success: Deployed ${proposals.length} logic rules.`);
+    localStorage.removeItem(STORAGE_KEY);
+    addLog(`Logic deployed to system. Restore point cleared.`, 'success');
+    alert(`Success: Deployed ${proposals.length} rules.`);
   };
 
   const exportToExcel = () => {
@@ -373,8 +438,8 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
           <div>
             <h2 className="text-3xl font-black text-slate-800 tracking-tighter uppercase leading-none">Neural Academy</h2>
             <div className="flex items-center gap-4 mt-3">
-               <button onClick={() => { setActiveMode('logic-synthesis'); setProposals([]); }} className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${activeMode === 'logic-synthesis' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>Logic Synthesis Lab</button>
-               <button onClick={() => { setActiveMode('weights'); setProposals([]); }} className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${activeMode === 'weights' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>Neural Pattern Training</button>
+               <button onClick={() => setActiveMode('logic-synthesis')} className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${activeMode === 'logic-synthesis' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>Logic Synthesis Lab</button>
+               <button onClick={() => setActiveMode('weights')} className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${activeMode === 'weights' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}>Neural Pattern Training</button>
             </div>
           </div>
         </div>
@@ -395,9 +460,16 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
       <div className="flex-1 overflow-auto p-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-4 space-y-6">
           <div className="bg-white rounded-[2.5rem] border p-8 shadow-sm space-y-6 sticky top-0">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-              <FlaskConical size={14} className="text-indigo-500" /> Lab Configuration
-            </h3>
+            <div className="flex justify-between items-center">
+              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                <FlaskConical size={14} className="text-indigo-500" /> Lab Configuration
+              </h3>
+              {proposals.length > 0 && (
+                <button onClick={clearSession} className="text-red-500 hover:text-red-600 transition-colors" title="Reset Session">
+                  <RotateCcw size={14} />
+                </button>
+              )}
+            </div>
             
             <div className="space-y-4">
               <div className="group bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl p-6 flex flex-col items-center justify-center relative cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all">
@@ -412,14 +484,20 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                 <span className="text-[10px] font-black text-slate-400 mt-3 uppercase text-center">{moFiles.length > 0 ? `${moFiles.length} Order Files Loaded` : 'Upload MO Summaries (PDF)'}</span>
               </div>
 
-              <button 
-                onClick={activeMode === 'logic-synthesis' ? startLogicSynthesis : startTraining} 
-                disabled={isTraining} 
-                className={`w-full py-5 rounded-2xl flex items-center justify-center gap-3 text-xs font-black uppercase transition-all shadow-xl active:scale-95 ${isTraining ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-100'}`}
-              >
-                {isTraining ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />}
-                {isTraining ? 'Neural Processing...' : 'Synthesize Logic Formulas'}
-              </button>
+              <div className="space-y-2">
+                 <div className="flex justify-between text-[8px] font-black text-slate-400 uppercase tracking-widest px-2">
+                    <span>Session Persistence</span>
+                    <span className="flex items-center gap-1 text-emerald-500"><Save size={8} /> Auto-Saving Enabled</span>
+                 </div>
+                 <button 
+                  onClick={activeMode === 'logic-synthesis' ? startLogicSynthesis : startTraining} 
+                  disabled={isTraining || cooldownRemaining > 0} 
+                  className={`w-full py-5 rounded-2xl flex items-center justify-center gap-3 text-xs font-black uppercase transition-all shadow-xl active:scale-95 ${isTraining || cooldownRemaining > 0 ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-100'}`}
+                >
+                  {isTraining ? <Loader2 size={18} className="animate-spin" /> : cooldownRemaining > 0 ? <Clock size={18} /> : proposals.length > 0 ? <Play size={18} /> : <Zap size={18} />}
+                  {isTraining ? 'Neural Processing...' : cooldownRemaining > 0 ? `Cooling (${cooldownRemaining}s)` : proposals.length > 0 ? 'Resume Synthesis' : 'Synthesize Logic Formulas'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -429,7 +507,13 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                <button onClick={() => setTrainingLog([])} className="text-slate-500 hover:text-white transition-colors"><Trash2 size={14} /></button>
              </div>
              <div className="flex-1 overflow-auto font-mono text-[9px] space-y-2 scrollbar-hide">
-                {trainingLog.length === 0 && <p className="text-slate-700 italic">Lab standby. Upload datasets to begin logic correlation...</p>}
+                {cooldownRemaining > 0 && (
+                   <div className="bg-indigo-500/20 p-3 rounded-xl border border-indigo-500/30 flex items-center gap-3 text-indigo-300 mb-4 animate-pulse">
+                      <Timer size={14} />
+                      <span className="font-bold uppercase tracking-tight">API QUOTA RESET: PAUSING FOR {cooldownRemaining}s</span>
+                   </div>
+                )}
+                {trainingLog.length === 0 && <p className="text-slate-700 italic">Lab standby. Restore point active if previously closed.</p>}
                 {trainingLog.map((l, i) => (
                   <div key={i} className={`flex gap-3 leading-relaxed ${l.type === 'error' ? 'text-red-400' : l.type === 'success' ? 'text-emerald-400' : l.type === 'warn' ? 'text-amber-400' : 'text-indigo-200/80'}`}>
                     <span className="opacity-30">[{new Date().toLocaleTimeString()}]</span>
@@ -447,23 +531,23 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                    <div className="flex items-center gap-4">
                       <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shadow-inner"><Activity size={24} /></div>
                       <div>
-                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter leading-none">Formula Discoveries</h3>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Discovered {proposals.length} Engineering Formulas</p>
+                        <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter leading-none">Real-Time Discoveries</h3>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Incremental Restore Point Active</p>
                       </div>
                    </div>
                    <div className="flex gap-2">
                       <div className="relative mr-2">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={14} />
-                        <input type="text" placeholder="Search report..." value={resultSearchTerm} onChange={(e) => setResultSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 text-[10px] font-black uppercase bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/10 transition-all w-48" />
+                        <input type="text" placeholder="Filter results..." value={resultSearchTerm} onChange={(e) => setResultSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 text-[10px] font-black uppercase bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/10 transition-all w-48" />
                       </div>
                       <button onClick={exportToExcel} title="Export Findings" className="p-3 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 transition-all shadow-sm"><Download size={18} /></button>
-                      <button onClick={deployLogic} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase rounded-xl shadow-lg transition-all active:scale-95">Deploy to System</button>
+                      <button onClick={deployLogic} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase rounded-xl shadow-lg transition-all active:scale-95">Deploy All Rules</button>
                    </div>
                 </div>
                 
                 <div className="flex-1 overflow-auto pr-4 space-y-4">
-                   {filteredProposals.map((p, i) => (
-                      <div key={i} className="p-8 border-2 rounded-[2.5rem] bg-white hover:border-indigo-400 transition-all flex flex-col gap-6 shadow-sm group">
+                   {filteredProposals.slice().reverse().map((p, i) => (
+                      <div key={p.partNumber} className="p-8 border-2 rounded-[2.5rem] bg-white hover:border-indigo-400 transition-all flex flex-col gap-6 shadow-sm group animate-in slide-in-from-top-4">
                          <div className="flex justify-between items-start">
                             <div className="space-y-1">
                                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest font-mono">Part Number: {p.partNumber}</p>
@@ -519,13 +603,8 @@ const NeuralAcademy: React.FC<Props> = ({ knowledgeBase, onKnowledgeBaseUpdate, 
                   </div>
                   <h4 className="text-xs font-black uppercase tracking-[0.5em] text-slate-400">Synthesis Engine Offline</h4>
                   <p className="text-[10px] font-bold text-slate-400 mt-4 max-w-sm uppercase leading-relaxed tracking-wider">
-                    Link your Master Item List (MIL) with Factory Order PDF summaries to automatically synthesize engineering logic formulas based on technical correlation.
+                    Upload your datasets to begin automated engineering logic correlation. All results are saved incrementally to allow pause/resume.
                   </p>
-                  <div className="mt-8 flex gap-4">
-                    <div className="flex items-center gap-2 text-[8px] font-black text-slate-300 uppercase px-4 py-2 bg-slate-50 border rounded-xl shadow-sm"><Layers2 size={12} /> Auto-Discovery</div>
-                    <div className="flex items-center gap-2 text-[8px] font-black text-slate-300 uppercase px-4 py-2 bg-slate-50 border rounded-xl shadow-sm"><Download size={12} /> Report Export</div>
-                    <div className="flex items-center gap-2 text-[8px] font-black text-slate-300 uppercase px-4 py-2 bg-slate-50 border rounded-xl shadow-sm"><RefreshCw size={12} /> Deployment Hub</div>
-                  </div>
                 </div>
              </div>
            )}
